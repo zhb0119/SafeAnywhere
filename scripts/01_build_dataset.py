@@ -75,7 +75,7 @@ def main() -> int:
     parser.add_argument("--config", required=True, help="Path to YAML/JSON config.")
     parser.add_argument("--mock", action="store_true", help="Use deterministic mock teacher.")
     parser.add_argument("--quiet", action="store_true", help="Disable tqdm progress bar.")
-    parser.add_argument("--workers", type=int, default=1, help="Concurrent teacher API calls. Start with 2 or 4.")
+    parser.add_argument("--workers", type=int, default=1, help="Concurrent teacher API calls. Start with 1; try 2 if stable.")
     args = parser.parse_args()
 
     if args.workers < 1:
@@ -93,7 +93,14 @@ def main() -> int:
         if not settings["api_key"]:
             raise RuntimeError(f"Missing teacher API key. Set {config['teacher']['api_key_env']} or use --mock.")
 
-    for path in [manifest_path, annotations_path, failed_path, output_dir / "sft_train.jsonl", output_dir / "sft_val.jsonl"]:
+    for path in [
+        manifest_path,
+        annotations_path,
+        failed_path,
+        output_dir / "sft_train.jsonl",
+        output_dir / "sft_val.jsonl",
+        report_path,
+    ]:
         path.unlink(missing_ok=True)
 
     targets = target_counts(config)
