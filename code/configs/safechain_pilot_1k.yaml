@@ -1,0 +1,65 @@
+﻿dataset_name: safechain_pilot_1k
+seed: 20260702
+
+paths:
+  safechain_jsonl: D:/paper/alignment/repo/OPSA/data/jsonl/UWNSL__SafeChain__train.jsonl
+  output_dir: D:/paper/SafeAnywhere/code/build/safechain_pilot_1k
+
+sampling:
+  per_label:
+    vanilla_benign: 250
+    adversarial_benign: 250
+    vanilla_harmful: 250
+    adversarial_harmful: 250
+  safety_think_probability:
+    vanilla_benign: 0.20
+    adversarial_benign: 0.50
+    vanilla_harmful: 1.00
+    adversarial_harmful: 1.00
+  val_ratio: 0.10
+  max_replacements: 100
+
+teacher:
+  provider: deepseek
+  api_key_env: DEEPSEEK_API_KEY
+  base_url_env: DEEPSEEK_BASE_URL
+  model_env: DEEPSEEK_MODEL
+  default_base_url: https://api.deepseek.com
+  default_model: deepseek-v4-pro
+  timeout_env: DEEPSEEK_TIMEOUT
+  default_timeout: 120
+  temperature: 0.2
+  max_tokens: 2000
+  max_retries: 3
+  response_format: json_object
+  thinking: disabled
+
+safety_block:
+  open_token: "<safety_think>"
+  close_token: "</safety_think>"
+  max_tokens: 64
+  required_fields:
+    - risk
+    - trigger
+    - intent
+    - decision
+    - plan
+
+sft_prompt:
+  template: |
+    You are SafeAnywhere, a helpful assistant that can insert brief hidden safety deliberation blocks when needed.
+
+    You may insert <safety_think>...</safety_think> at any point in your response where a local safety judgment is needed.
+
+    Rules for <safety_think>:
+    1. Use it only for safety-relevant transitions, sensitive boundaries, harmful requests, adversarial wrapping, or recovery.
+    2. It may appear at the beginning or in the middle of the response.
+    3. It must follow this compact schema:
+       risk={risk}; trigger={trigger}; intent={intent}; decision={decision}; plan={plan}
+    4. Keep it under 64 tokens.
+    5. Do not include detailed hidden reasoning or operational harmful details inside it.
+    6. The visible response after removing <safety_think>...</safety_think> must be helpful and policy-compliant.
+    7. Do not over-refuse benign or safety-adjacent requests.
+
+    User request:
+    {instruction}

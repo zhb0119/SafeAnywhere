@@ -1,0 +1,23 @@
+[project]
+name = "safeanywhere-data"
+version = "0.1.0"
+description = "Reproducible data construction pipeline for SafeAnywhere safety-think SFT pilots."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "openai>=1.0.0",
+  "PyYAML>=6.0",
+  "tqdm>=4.68.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
