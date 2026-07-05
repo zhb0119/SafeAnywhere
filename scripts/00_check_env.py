@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import importlib.util
@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from safeanywhere.io_utils import load_dotenv, read_config  # noqa: E402
+from safeanywhere.io_utils import load_dotenv, read_config, resolve_cli_path, resolve_config_paths  # noqa: E402
 from safeanywhere.sampling import load_safechain_pool  # noqa: E402
 
 load_dotenv(ROOT / ".env")
@@ -27,7 +27,8 @@ def main() -> int:
     parser.add_argument("--require-api", action="store_true")
     args = parser.parse_args()
 
-    config = read_config(args.config)
+    config_path = resolve_cli_path(args.config, ROOT)
+    config = resolve_config_paths(read_config(config_path), ROOT)
     source = Path(config["paths"]["safechain_jsonl"])
     per_label = config["sampling"]["per_label"]
     teacher = config["teacher"]
@@ -53,7 +54,7 @@ def main() -> int:
 
     report = {
         "ok": not errors,
-        "config": str(Path(args.config).resolve()),
+        "config": str(config_path),
         "source_exists": source.exists(),
         "available_by_label": available,
         "requested_by_label": per_label,

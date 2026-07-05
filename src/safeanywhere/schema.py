@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 ALLOWED_LABELS = {
     "vanilla_benign",

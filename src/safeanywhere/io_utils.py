@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -18,6 +18,34 @@ def read_config(path: str | Path) -> dict[str, Any]:
     if path.suffix.lower() == ".json":
         return json.loads(text)
     raise ValueError(f"Unsupported config suffix: {path.suffix}")
+
+
+def resolve_cli_path(path: str | Path, project_root: str | Path) -> Path:
+    path = Path(path).expanduser()
+    if path.is_absolute():
+        return path
+    cwd_path = path.resolve()
+    if cwd_path.exists():
+        return cwd_path
+    return (Path(project_root) / path).resolve()
+
+
+def resolve_project_path(path: str | Path, project_root: str | Path) -> Path:
+    path = Path(path).expanduser()
+    if path.is_absolute():
+        return path
+    return (Path(project_root) / path).resolve()
+
+
+def resolve_config_paths(config: dict[str, Any], project_root: str | Path) -> dict[str, Any]:
+    paths = config.get("paths")
+    if not isinstance(paths, dict):
+        return config
+    resolved = dict(paths)
+    for key, value in paths.items():
+        if isinstance(value, str) and value:
+            resolved[key] = str(resolve_project_path(value, project_root))
+    return {**config, "paths": resolved}
 
 
 def ensure_dir(path: str | Path) -> Path:

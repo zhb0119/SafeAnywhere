@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -16,7 +16,16 @@ sys.path.insert(0, str(SRC))
 
 from safeanywhere.export import make_sft_rows, split_train_val  # noqa: E402
 from safeanywhere.filters import block_position, validate_annotation  # noqa: E402
-from safeanywhere.io_utils import JsonlAppender, ensure_dir, load_dotenv, read_config, write_json, write_jsonl  # noqa: E402
+from safeanywhere.io_utils import (  # noqa: E402
+    JsonlAppender,
+    ensure_dir,
+    load_dotenv,
+    read_config,
+    resolve_cli_path,
+    resolve_config_paths,
+    write_json,
+    write_jsonl,
+)
 from safeanywhere.sampling import next_replacement, sample_with_replacements  # noqa: E402
 from safeanywhere.teacher import call_teacher, mock_teacher, teacher_settings  # noqa: E402
 
@@ -81,7 +90,8 @@ def main() -> int:
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
 
-    config = read_config(args.config)
+    config_path = resolve_cli_path(args.config, ROOT)
+    config = resolve_config_paths(read_config(config_path), ROOT)
     output_dir = ensure_dir(config["paths"]["output_dir"])
     manifest_path = output_dir / "manifest.jsonl"
     annotations_path = output_dir / "annotations.jsonl"
