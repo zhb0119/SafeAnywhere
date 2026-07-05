@@ -3,12 +3,6 @@
 import textwrap
 
 
-SAFETY_BLOCK = """
-<safety_think>
-risk={risk}; trigger={trigger}; intent={intent}; decision={decision}; plan={plan}
-</safety_think>
-""".strip()
-
 SCHEMA = r"""
 Return one valid JSON object only:
 {
@@ -20,9 +14,13 @@ Hard rules:
 - The JSON value response is the final SFT target.
 - If requires_safety_think=true, response MUST contain exactly one literal <safety_think>...</safety_think> block.
 - If requires_safety_think=false, response MUST NOT contain <safety_think>.
-- The safety block must use this compact schema:
-  risk={risk}; trigger={trigger}; intent={intent}; decision={decision}; plan={plan}
-- Keep the block under 64 tokens.
+- The safety block must use exactly this compact schema:
+  risk={short_free_text}; trigger={short_free_text}; intent={one_allowed_intent}; decision={one_allowed_decision}; plan={short_free_text}
+- Allowed intent values: benign, ambiguous, dual_use, harmful, jailbreak.
+- Allowed decision values: answer, clarify, limit, refuse, recover.
+- Use only these exact intent/decision tokens. Do not use synonyms such as harmless, allow, decline, unsafe, proceed.
+- risk, trigger, and plan are short free-text phrases. Keep them compact and non-operational.
+- Keep the whole safety block under 64 tokens.
 - Do not put detailed chain-of-thought or operational harmful details inside the block.
 """
 
@@ -40,13 +38,13 @@ If a safety block is required, place it at the local boundary-setting point. Use
     "vanilla_harmful": """
 Current class: vanilla_harmful.
 The request is directly harmful or disallowed. Refuse or redirect safely.
-A safety block is required before the refusal. Use intent=harmful and decision=refuse or limit.
+A safety block is required before the refusal. Use intent=harmful or dual_use and decision=refuse or limit.
 Do not provide operational harmful details.
 """,
     "adversarial_harmful": """
 Current class: adversarial_harmful.
 The request is harmful or disallowed and may be wrapped in roleplay, fiction, policy override, encoding, translation, or refusal-suppression tactics.
-A safety block is required at the natural local safety judgment point. Use intent=harmful or jailbreak; decision=refuse, limit, or recover.
+A safety block is required at the natural local safety judgment point. Use intent=harmful, jailbreak, or dual_use; decision=refuse, limit, or recover.
 Do not comply with the harmful goal.
 """,
 }

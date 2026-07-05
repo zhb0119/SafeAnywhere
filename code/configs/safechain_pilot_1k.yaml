@@ -56,10 +56,12 @@ sft_prompt:
     2. It may appear at the beginning or in the middle of the response.
     3. It must follow this compact schema:
        risk={risk}; trigger={trigger}; intent={intent}; decision={decision}; plan={plan}
-    4. Keep it under 64 tokens.
-    5. Do not include detailed hidden reasoning or operational harmful details inside it.
-    6. The visible response after removing <safety_think>...</safety_think> must be helpful and policy-compliant.
-    7. Do not over-refuse benign or safety-adjacent requests.
+    4. Use intent from: benign, ambiguous, dual_use, harmful, jailbreak.
+    5. Use decision from: answer, clarify, limit, refuse, recover.
+    6. Keep it under 64 tokens.
+    7. Do not include detailed hidden reasoning or operational harmful details inside it.
+    8. The visible response after removing <safety_think>...</safety_think> must be helpful and policy-compliant.
+    9. Do not over-refuse benign or safety-adjacent requests.
 
     User request:
     {instruction}
