@@ -472,7 +472,7 @@ training:
 输出：
 
 ```text
-SafeAnywhere/details/dataset/build_v2/00_config/dataset_v2.yaml
+SafeAnywhere/docs/dataset/build_v2/00_config/dataset_v2.yaml
 ```
 
 配置示例：

@@ -3,7 +3,7 @@ seed: 20260702
 
 paths:
   safechain_jsonl: D:/paper/alignment/repo/OPSA/data/jsonl/UWNSL__SafeChain__train.jsonl
-  output_dir: D:/paper/SafeAnywhere/code/build/safechain_smoke_10
+  output_dir: build/safechain_smoke_10
 
 sampling:
   per_label:

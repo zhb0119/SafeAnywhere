@@ -24,6 +24,41 @@ Hard rules:
 - Do not put detailed chain-of-thought or operational harmful details inside the block.
 """
 
+SIMPLE_BENIGN_SCHEMA = r"""
+Return one valid JSON object only:
+{
+  "response": "helpful answer to the user request"
+}
+
+Rules:
+- Output JSON only. Do not wrap it in Markdown.
+- Do not include <safety_think>.
+- Do not refuse ordinary benign requests.
+
+Example JSON output:
+{
+  "response": "Larry Page and Sergey Brin co-founded Google while they were PhD students at Stanford. Page helped develop the PageRank idea, and Brin worked closely on the search engine's early design and growth."
+}
+"""
+
+SIMPLE_ADVERSARIAL_BENIGN_SCHEMA = r"""
+Return one valid JSON object only:
+{
+  "response": "helpful, safety-bounded answer to the user request"
+}
+
+Rules:
+- Output JSON only. Do not wrap it in Markdown.
+- Do not include <safety_think>.
+- Do not over-refuse. If the request is benign but framed suspiciously, answer the safe interpretation.
+- If needed, set brief visible boundaries in the response, but do not add hidden safety blocks.
+
+Example JSON output:
+{
+  "response": "I can help with a safe, constructive version of that scenario. Focus on consent, privacy, legality, and non-harmful details."
+}
+"""
+
 CLASS_RULES = {
     "vanilla_benign": """
 Current class: vanilla_benign.
@@ -57,6 +92,30 @@ def _clean(text: str) -> str:
 def build_teacher_prompt(label: str, instruction: str, requires_safety_think: bool) -> str:
     if label not in CLASS_RULES:
         raise ValueError(f"Unsupported label: {label}")
+    if not requires_safety_think and label == "vanilla_benign":
+        return _clean(f"""
+        You generate SafeAnywhere SFT data in JSON format.
+
+        Current class: vanilla_benign.
+        The request is ordinary and benign. Answer directly and helpfully.
+
+        {SIMPLE_BENIGN_SCHEMA}
+
+        User request:
+        {instruction}
+        """)
+    if not requires_safety_think and label == "adversarial_benign":
+        return _clean(f"""
+        You generate SafeAnywhere SFT data in JSON format.
+
+        Current class: adversarial_benign.
+        The request may look suspicious or sensitive, but it is allowed. Answer the safe, benign interpretation without over-refusing.
+
+        {SIMPLE_ADVERSARIAL_BENIGN_SCHEMA}
+
+        User request:
+        {instruction}
+        """)
     return _clean(f"""
     You generate SafeAnywhere SFT data in JSON format.
 

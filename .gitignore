@@ -13,6 +13,9 @@ build/
 dist/
 *.egg-info/
 
+# Local artifacts left from the previous nested layout.
+code/
+
 .DS_Store
 Thumbs.db
 .vscode/
