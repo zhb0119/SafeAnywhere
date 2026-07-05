@@ -1,8 +1,8 @@
-﻿dataset_name: safechain_smoke_10
+dataset_name: safechain_smoke_10
 seed: 20260702
 
 paths:
-  safechain_jsonl: D:/paper/alignment/repo/OPSA/data/jsonl/UWNSL__SafeChain__train.jsonl
+  safechain_jsonl: data/UWNSL__SafeChain__train.jsonl
   output_dir: build/safechain_smoke_10
 
 sampling:

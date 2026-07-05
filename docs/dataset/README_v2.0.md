@@ -1,4 +1,4 @@
-﻿# SafeAnywhere 数据构造 Pipeline v2.0
+# SafeAnywhere 数据构造 Pipeline v2.0
 
 ## 0. 版本目标
 
@@ -472,7 +472,7 @@ training:
 输出：
 
 ```text
-SafeAnywhere/docs/dataset/build_v2/00_config/dataset_v2.yaml
+docs/dataset/build_v2/00_config/dataset_v2.yaml
 ```
 
 配置示例：

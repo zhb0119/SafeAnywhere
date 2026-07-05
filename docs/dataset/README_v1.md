@@ -12,7 +12,7 @@
 所有 prompt 都统一来自 SafeChain：
 
 ```text
-D:\paper\alignment\repo\OPSA\data\jsonl\UWNSL__SafeChain__train.jsonl
+data/UWNSL__SafeChain__train.jsonl
 ```
 
 只使用 SafeChain 自带的四类标签：
@@ -405,7 +405,7 @@ adversarial_benign
 读取：
 
 ```text
-D:\paper\alignment\repo\OPSA\data\jsonl\UWNSL__SafeChain__train.jsonl
+data/UWNSL__SafeChain__train.jsonl
 ```
 
 保留：

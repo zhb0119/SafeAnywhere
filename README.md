@@ -1,31 +1,33 @@
 # SafeAnywhere
 
-SafeAnywhere is a compact data-construction pipeline for building safety-think SFT pilots from SafeChain-style samples. The final SFT files stay in ordinary `prompt` / `response` format, while selected assistant responses may contain a brief `<safety_think>...</safety_think>` block.
+SafeAnywhere 是一个用于构造 safety-think SFT pilot 数据的轻量数据工程项目。最终训练文件仍然是普通的 `prompt` / `response` 格式；在需要局部安全判断的 assistant response 中，可以插入简短的 `<safety_think>...</safety_think>` 块。
 
-## Repository Layout
+## 项目结构
 
 ```text
 .
-  configs/             # Smoke and pilot dataset configs
-  scripts/             # CLI entry points for environment checks and dataset builds
-  src/safeanywhere/    # Sampling, teacher prompting, validation, and export logic
-  docs/dataset/        # Dataset design notes and prompt specs
-  docs/method/         # Method proposals and condensed notes
-  build/               # Generated outputs, ignored by Git
-  .env.example         # Local environment template
-  pyproject.toml       # Python package metadata
+  configs/             # smoke / pilot 数据构造配置
+  scripts/             # 环境检查与数据构造入口脚本
+  src/safeanywhere/    # 采样、teacher prompt、校验、导出逻辑
+  docs/dataset/        # 数据集设计说明与 prompt 规范
+  docs/method/         # 方法方案与简版说明
+  data/                # 本地数据源目录，Git 忽略
+  build/               # 生成结果目录，Git 忽略
+  .env.example         # 本地环境变量模板
+  pyproject.toml       # Python 项目配置
 ```
 
-The repository root is now the Python project root. There is no tracked nested `code/` project.
+仓库根目录就是 Python 项目根目录，不再维护嵌套的 `code/` 项目层。
 
-## Installation
+## 安装
+
+在仓库根目录运行：
 
 ```powershell
-cd D:\paper\SafeAnywhere
 uv sync
 ```
 
-For real DeepSeek/OpenAI-compatible teacher calls, create a local `.env` file from `.env.example` and set:
+真实调用 DeepSeek 或 OpenAI-compatible teacher 前，复制 `.env.example` 为本地 `.env`，并填写：
 
 ```text
 DEEPSEEK_API_KEY=...
@@ -33,91 +35,113 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-pro
 ```
 
-`.env` is ignored and must not be committed.
+`.env` 已被 Git 忽略，不要提交。
 
-## Run
+## 数据源
 
-Check the environment and config:
+默认配置会从下面的相对路径读取 SafeChain 训练集：
+
+```text
+data/UWNSL__SafeChain__train.jsonl
+```
+
+可以把数据文件放到这个位置，也可以按本机环境修改 `configs/*.yaml` 中的 `paths.safechain_jsonl`。`data/` 已被 Git 忽略，适合放本地数据集。
+
+## 运行
+
+检查环境和配置：
 
 ```powershell
 uv run python scripts/00_check_env.py --config configs/safechain_smoke_10.yaml --require-api
 ```
 
-Build a mock smoke dataset without API calls:
+不调用 API，构造 mock smoke 数据：
 
 ```powershell
 uv run python scripts/01_build_dataset.py --config configs/safechain_smoke_10.yaml --mock
 ```
 
-Build with the real teacher endpoint:
+调用真实 teacher，构造 10 条 smoke 数据：
 
 ```powershell
 uv run python scripts/01_build_dataset.py --config configs/safechain_smoke_10.yaml --workers 2
 ```
 
-The scripts show a tqdm progress bar by default. Use `--workers` to control concurrent API calls; start with `2` and only increase after the provider is stable. Add `--quiet` to disable the progress bar.
+构造 1k pilot 数据：
 
-## Failure Handling
+```powershell
+uv run python scripts/01_build_dataset.py --config configs/safechain_pilot_1k.yaml --workers 1
+```
 
-API empty responses, JSON parse failures, and safety-block validation failures are excluded from the training set. The builder will:
+provider 稳定后可以尝试 `--workers 2`。在 empty content 失败率较低之前，不建议开太高并发。
 
-1. Write failed samples to `failed.jsonl` with `id`, `label`, `instruction`, and `error`.
-2. Draw same-label replacements from the SafeChain pool.
-3. Continue until each label reaches the configured target count or `sampling.max_replacements` is exhausted.
+脚本默认显示 tqdm 进度条；使用 `--quiet` 可以关闭进度条。
 
-This keeps label counts balanced and avoids silently producing short datasets after individual failures.
+## 失败与补采
+
+API 空返回、JSON 解析失败、安全块校验失败都不会进入训练集。构造脚本会：
+
+1. 将失败样本写入 `failed.jsonl`，保留 `id`、`label`、`instruction` 和 `error`。
+2. 从同 label 的 SafeChain 池中补采 replacement。
+3. 继续生成，直到每个 label 达到配置目标数量，或达到 `sampling.max_replacements`。
+
+这样可以保持标签数量平衡，避免单条失败导致最终数据集静默变短。
+
+中断运行可能留下部分 `manifest.jsonl`、`annotations.jsonl` 或 `failed.jsonl`。当前脚本在重新运行时会清理这些文件并重建数据集；没有 `report.json` 的输出目录应视为未完成。
 
 ## Teacher Prompt Routing
 
-To reduce empty JSON outputs on simple benign samples, teacher prompts are routed by sample type:
+为了降低简单 benign 样本上的 JSON 空返回概率，teacher prompt 按样本类型分流：
 
 ```text
 vanilla_benign + requires_safety_think=false
-  -> short JSON prompt requiring only {"response": "..."}
+  -> 短 JSON prompt，只要求 {"response": "..."}
 
 adversarial_benign + requires_safety_think=false
-  -> short JSON prompt emphasizing safe benign interpretation and no <safety_think>
+  -> 短 JSON prompt，强调按安全 benign 解释回答，不插入 <safety_think>
 
-requires_safety_think=true or harmful/adversarial_harmful
-  -> full safety-block schema prompt
+requires_safety_think=true 或 harmful/adversarial_harmful
+  -> 完整 safety block schema prompt
 ```
 
-This keeps ordinary benign samples away from the longer safety schema while preserving strict format control for higher-risk samples.
+这样普通 benign 样本不会被较长的 safety schema 干扰，同时高风险样本仍保留严格格式约束。
 
 ## Safety Block Schema
 
-`<safety_think>` uses a semi-controlled schema:
+`<safety_think>` 使用半受控 schema：
 
 ```text
 risk={short_free_text}; trigger={short_free_text}; intent={intent}; decision={decision}; plan={short_free_text}
 ```
 
-Small-vocabulary fields:
+小词表字段如下：
 
 ```text
 intent: benign, ambiguous, dual_use, harmful, jailbreak
 decision: answer, clarify, limit, refuse, recover
 ```
 
-`risk`, `trigger`, and `plan` must be non-empty, compact free-text phrases. The validator canonicalizes common aliases, such as `harmless -> benign`, `allow -> answer`, and `decline -> refuse`, then writes the normalized response.
+`risk`、`trigger`、`plan` 是非空、简短的自由文本短语。校验器会把常见同义词归一化，例如 `harmless -> benign`、`allow -> answer`、`decline -> refuse`，最终写入的是归一化后的 response。
 
-## Outputs
+## 输出
 
-Each config writes generated files under `build/<dataset_name>/`:
+构造脚本在 API 生成过程中会把完成样本流式写入磁盘。成功结束后，脚本会按 manifest 顺序重写 JSONL 文件，避免并发完成顺序打乱最终文件顺序。
+
+每个配置默认写入：
 
 ```text
 build/<dataset_name>/
-  manifest.jsonl       # Initial samples and replacements
-  annotations.jsonl    # Validated teacher outputs
-  failed.jsonl         # Failed samples, only when failures exist
-  sft_train.jsonl      # Final SFT training split
-  sft_val.jsonl        # Final SFT validation split
-  report.json          # Counts, failures, replacements, positions, and teacher metadata
+  manifest.jsonl       # 初始样本与 replacement 清单
+  annotations.jsonl    # 通过校验的 teacher 输出
+  failed.jsonl         # 失败样本，仅存在失败时生成
+  sft_train.jsonl      # 最终 SFT 训练集
+  sft_val.jsonl        # 最终 SFT 验证集
+  report.json          # 数量、失败、replacement、位置、写入模式与 teacher 元数据
 ```
 
-`report.json` includes `safety_think_position`, which records whether safety blocks appeared at the beginning or middle of responses.
+`report.json` 中的 `safety_think_position` 会统计安全块出现在 response 开头还是中间。
 
-## Documentation
+## 文档
 
-- Dataset design: `docs/dataset/`
-- Method notes: `docs/method/`
+- 数据集设计：`docs/dataset/`
+- 方法说明：`docs/method/`

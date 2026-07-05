@@ -8,7 +8,7 @@
 
 核心约束：
 
-- prompt 统一来自 SafeChain：`D:\paper\alignment\repo\OPSA\data\jsonl\UWNSL__SafeChain__train.jsonl`
+- prompt 统一来自 SafeChain：`data/UWNSL__SafeChain__train.jsonl`
 - 只使用 SafeChain 的 `instruction` 和 `label` 作为 prompt pool。
 - 不直接使用 SafeChain 的 `response` 作为训练 target，因为其中常有长推理文本。
 - 所有样本先进入 manifest，再生成 prefix 和 target。不要在采样脚本里直接调用 teacher。
@@ -40,7 +40,7 @@
 建议输出目录：
 
 ```text
-SafeAnywhere/details/dataset/build/
+docs/dataset/build/
   00_config/
     dataset_v1_5k.yaml
   01_clean/
@@ -135,7 +135,7 @@ prefix_depth  : 0 或目标 prefix token 深度
 dataset_name: safeanywhere_sft_v1
 seed: 20260630
 target_size: 5000
-source_path: D:/paper/alignment/repo/OPSA/data/jsonl/UWNSL__SafeChain__train.jsonl
+source_path: data/UWNSL__SafeChain__train.jsonl
 
 safe_check:
   open_token: "<|safe_check|>"
@@ -602,7 +602,7 @@ labels[target_start:] = input_ids[target_start:]
 
 ## 13. 推荐脚本布局
 
-建议在 `SafeAnywhere/details/dataset/` 下新增：
+建议在 `docs/dataset/` 下新增：
 
 ```text
 scripts/

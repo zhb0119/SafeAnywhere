@@ -10,6 +10,7 @@ __pycache__/
 .ruff_cache/
 
 build/
+data/
 dist/
 *.egg-info/
 
