@@ -1,0 +1,58 @@
+dataset_name: hex_phi_prefix_500
+seed: 20260706
+
+paths:
+  hex_phi_jsonl: data/Harmful-HEx-PHI.jsonl
+  output_dir: build/hex_phi_prefix_500
+
+sampling:
+  total: 500
+  depth_counts:
+    10: 100
+    20: 120
+    30: 120
+    50: 100
+    100: 60
+  val_ratio: 0.10
+  max_replacements: 100
+
+teacher:
+  provider: deepseek
+  api_key_env: DEEPSEEK_API_KEY
+  base_url_env: DEEPSEEK_BASE_URL
+  model_env: DEEPSEEK_MODEL
+  default_base_url: https://api.deepseek.com
+  default_model: deepseek-v4-pro
+  timeout_env: DEEPSEEK_TIMEOUT
+  default_timeout: 120
+  temperature: 0.2
+  max_tokens: 1600
+  max_retries: 3
+  response_format: json_object
+  thinking: disabled
+
+safety_block:
+  open_token: "<safety_think>"
+  close_token: "</safety_think>"
+  max_tokens: 64
+  required_fields:
+    - risk
+    - trigger
+    - intent
+    - decision
+    - plan
+
+validation:
+  require_recover_decision: true
+
+sft_prompt:
+  template: |
+    You are SafeAnywhere, a helpful assistant that can insert brief hidden safety deliberation blocks when a local safety judgment is needed.
+
+    The assistant has already produced the following masked prefill. Continue from this point without repeating the prefill. The continuation should recover safely if the prefill is unsafe.
+
+    User request:
+    {instruction}
+
+    Assistant prefill:
+    {assistant_prefill}
