@@ -1,44 +1,49 @@
 # SafeAnywhere
 
-SafeAnywhere 是一个用于构造 safety-think SFT pilot 数据的轻量数据工程项目。最终训练文件仍然是普通的 `prompt` / `response` 格式；在需要局部安全判断的 assistant response 中，可以插入简短的 `<safety_think>...</safety_think>` 块。
+SafeAnywhere 当前用于复现第一轮 safety-think SFT pilot：
 
-## 项目结构
+- SafeChain cold-start safety-think：1000 条
+- HEx-PHI masked dangerous-prefix recovery：500 条
+- mixed 1500 SFT：1350 train / 150 val
+- LLaMA-Factory v1 span-mask JSONL 训练
+
+Dangerous-prefix 样本使用一个 assistant turn 内的 span-level mask：`assistant_prefill` 只作为上下文，loss 只落在 `<safety_think>...</safety_think>` 和 recovery 上。
+
+## 目录
 
 ```text
-.
-  configs/             # smoke / pilot 数据构造配置
-  scripts/             # 环境检查与数据构造入口脚本
-  src/safeanywhere/    # 采样、teacher prompt、校验、导出逻辑
-  docs/dataset/        # 数据集设计说明与 prompt 规范
-  docs/method/         # 方法方案与简版说明
-  data/                # 本地数据源目录，Git 忽略
-  build/               # 生成结果目录，Git 忽略
-  .env.example         # 本地环境变量模板
-  pyproject.toml       # Python 项目配置
+configs/             # 数据构造配置
+scripts/             # 数据构造、导出、mask 验证脚本
+src/safeanywhere/    # 数据采样、teacher、校验、导出逻辑
+integrations/        # LLaMA-Factory custom template
+train/llamafactory/  # LLaMA-Factory v1 训练配置
+docs/                # 方法与数据设计文档
+data/                # 本地数据源，Git 忽略
+build/               # 构造产物，Git 忽略
+runs/                # 训练产物，Git 忽略
 ```
 
-仓库根目录就是 Python 项目根目录，不再维护嵌套的 `code/` 项目层。
-
-## 安装
-
-Linux 环境要求：
+## 1. 安装 SafeAnywhere 环境
 
 ```bash
-python3 --version  # 需要 Python >= 3.10
-uv --version
-```
-
-在仓库根目录安装依赖，并严格使用 `uv.lock` 复现依赖版本：
-
-```bash
+cd /root/workspace/SafeAnywhere
 uv sync --frozen
 ```
 
-真实调用 DeepSeek 或 OpenAI-compatible teacher 前，复制 `.env.example` 为本地 `.env`，并填写：
+检查环境：
 
 ```bash
+uv run python scripts/00_check_env.py --config configs/safechain_smoke_10.yaml
+```
+
+## 2. 配置 Teacher API
+
+```bash
+cd /root/workspace/SafeAnywhere
 cp .env.example .env
 ```
+
+在 `.env` 中填写：
 
 ```text
 DEEPSEEK_API_KEY=...
@@ -46,137 +51,304 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-pro
 ```
 
-`.env` 已被 Git 忽略，不要提交。
+检查 API key：
 
-## 数据源
+```bash
+uv run python scripts/00_check_env.py \
+  --config configs/safechain_smoke_10.yaml \
+  --require-api
+```
 
-默认配置会从下面的相对路径读取 SafeChain 训练集：
+## 3. 准备数据源
+
+把本地数据放到：
 
 ```text
 data/UWNSL__SafeChain__train.jsonl
+data/Harmful-HEx-PHI.jsonl
 ```
 
-可以把数据文件放到这个位置，也可以按本机环境修改 `configs/*.yaml` 中的 `paths.safechain_jsonl`。`data/` 已被 Git 忽略，适合放本地数据集。
-
-配置文件中的 `paths.*` 统一按仓库根目录解析；绝对路径也可以直接使用。项目代码按 UTF-8 读取配置、`.env` 和 JSONL，输出 JSON/JSONL 也使用 UTF-8 与 LF 换行。
-
-## 运行
-
-检查环境和配置，不要求 API key：
-
-```bash
-uv run python scripts/00_check_env.py --config configs/safechain_smoke_10.yaml
-```
-
-检查真实 teacher 运行所需的 API key：
-
-```bash
-uv run python scripts/00_check_env.py --config configs/safechain_smoke_10.yaml --require-api
-```
-
-不调用 API，构造 mock smoke 数据：
-
-```bash
-uv run python scripts/01_build_dataset.py --config configs/safechain_smoke_10.yaml --mock
-```
-
-调用真实 teacher，构造 10 条 smoke 数据：
-
-```bash
-uv run python scripts/01_build_dataset.py --config configs/safechain_smoke_10.yaml --workers 2
-```
-
-构造 1k pilot 数据：
-
-```bash
-uv run python scripts/01_build_dataset.py --config configs/safechain_pilot_1k.yaml --workers 1
-```
-
-构造 500 条 HEx-PHI dangerous-prefix recovery 数据：
-
-```bash
-uv run python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1
-```
-
-这一路径会把 `data/Harmful-HEx-PHI.jsonl` 中的 harmful user / unsafe assistant pair 转成 masked `assistant_prefill`，并训练模型在完整 assistant 轨迹中于 `after_assistant_prefill` 位置插入 `<safety_think>` 做安全恢复。输出目录为 `build/hex_phi_prefix_500/`。
-
-从中断的 1k pilot 输出继续：
-
-```bash
-uv run python scripts/01_build_dataset.py --config configs/safechain_pilot_1k.yaml --workers 1 --resume
-```
-
-provider 稳定后可以尝试 `--workers 2`。在 empty content 失败率较低之前，不建议开太高并发。
-
-脚本默认显示 tqdm 进度条；使用 `--quiet` 可以关闭进度条。
-
-## 失败与补采
-
-API 空返回、JSON 解析失败、安全块校验失败都不会进入训练集。构造脚本会：
-
-1. 将失败样本写入 `failed.jsonl`，保留 `id`、`label`、`instruction` 和 `error`。
-2. 从同 label 的 SafeChain 池中补采 replacement。
-3. 继续生成，直到每个 label 达到配置目标数量，或达到 `sampling.max_replacements`。
-
-这样可以保持标签数量平衡，避免单条失败导致最终数据集静默变短。
-
-中断运行可能留下部分 `manifest.jsonl`、`annotations.jsonl` 或 `failed.jsonl`。不带 `--resume` 重新运行时，脚本会清理这些文件、SFT 导出文件和旧的 `report.json`，然后从头重建数据集。需要保留已有 teacher 输出并继续补足时，使用同一配置加 `--resume`；脚本会读取已有 manifest、跳过已成功或已失败样本，并继续生成剩余样本。
-
-只有当输出目录中存在 `report.json`，且其中 `counts.accepted == counts.target_total` 时，才应视为完整构建。
-
-## Teacher Prompt Routing
-
-为了降低简单 benign 样本上的 JSON 空返回概率，teacher prompt 按样本类型分流：
+如果路径不同，修改对应配置：
 
 ```text
-vanilla_benign + requires_safety_think=false
-  -> 短 JSON prompt，只要求 {"response": "..."}
-
-adversarial_benign + requires_safety_think=false
-  -> 短 JSON prompt，强调按安全 benign 解释回答，不插入 <safety_think>
-
-requires_safety_think=true 或 harmful/adversarial_harmful
-  -> 完整 safety block schema prompt
+configs/safechain_smoke_10.yaml
+configs/safechain_pilot_1k.yaml
+configs/hex_phi_prefix_500.yaml
 ```
 
-这样普通 benign 样本不会被较长的 safety schema 干扰，同时高风险样本仍保留严格格式约束。
+## 4. 构造 SafeChain 数据
 
-## Safety Block Schema
+可选：先跑 mock smoke，不调用 API。
 
-`<safety_think>` 使用半受控 schema：
+```bash
+cd /root/workspace/SafeAnywhere
+uv run python scripts/01_build_dataset.py \
+  --config configs/safechain_smoke_10.yaml \
+  --mock
+```
+
+真实 smoke：
+
+```bash
+uv run python scripts/01_build_dataset.py \
+  --config configs/safechain_smoke_10.yaml \
+  --workers 2
+```
+
+构造 SafeChain 1k：
+
+```bash
+uv run python scripts/01_build_dataset.py \
+  --config configs/safechain_pilot_1k.yaml \
+  --workers 1
+```
+
+中断后继续：
+
+```bash
+uv run python scripts/01_build_dataset.py \
+  --config configs/safechain_pilot_1k.yaml \
+  --workers 1 \
+  --resume
+```
+
+## 5. 构造 HEx-PHI Dangerous-Prefix 数据
+
+```bash
+cd /root/workspace/SafeAnywhere
+uv run python scripts/02_build_dangerous_prefix.py \
+  --config configs/hex_phi_prefix_500.yaml \
+  --workers 1
+```
+
+中断后继续：
+
+```bash
+uv run python scripts/02_build_dangerous_prefix.py \
+  --config configs/hex_phi_prefix_500.yaml \
+  --workers 1 \
+  --resume
+```
+
+## 6. 合并 mixed 1500
+
+```bash
+cd /root/workspace/SafeAnywhere
+uv run python scripts/03_merge_sft_pilot.py
+```
+
+产物：
 
 ```text
-risk={short_free_text}; trigger={short_free_text}; intent={intent}; decision={decision}; plan={short_free_text}
+build/mixed_safechain1k_prefix500/sft_train.jsonl
+build/mixed_safechain1k_prefix500/sft_val.jsonl
+build/mixed_safechain1k_prefix500/report.json
 ```
 
-小词表字段如下：
+## 7. 导出 LLaMA-Factory v1 数据
+
+```bash
+cd /root/workspace/SafeAnywhere
+uv run python scripts/04_export_llamafactory_v1.py
+```
+
+产物：
 
 ```text
-intent: benign, ambiguous, dual_use, harmful, jailbreak
-decision: answer, clarify, limit, refuse, recover
+build/mixed_safechain1k_prefix500/train_lf_v1_spanmasked.jsonl
+build/mixed_safechain1k_prefix500/val_lf_v1_spanmasked.jsonl
+train/llamafactory/dataset_safeanywhere_1500_train.yaml
+train/llamafactory/dataset_safeanywhere_1500_val.yaml
 ```
 
-`risk`、`trigger`、`plan` 是非空、简短的自由文本短语。校验器会把常见同义词归一化，例如 `harmless -> benign`、`allow -> answer`、`decline -> refuse`，最终写入的是归一化后的 response。
+结构级 mask 验证：
 
-## 输出
+```bash
+uv run python scripts/05_validate_llamafactory_masks.py --structure-only
+```
 
-构造脚本在 API 生成过程中会把完成样本流式写入磁盘。成功结束后，脚本会按 manifest 顺序重写 JSONL 文件，避免并发完成顺序打乱最终文件顺序。
+## 8. Clone LLaMA-Factory
 
-每个配置默认写入：
+```bash
+cd /root/workspace
+git clone https://github.com/hiyouga/LLaMA-Factory.git
+cd LLaMA-Factory
+git checkout a61cfa692a70fcced4ba32a846d1e2de95f2865e
+```
+
+## 9. 安装 LLaMA-Factory 环境
+
+如果当前 conda 环境已有可用 GPU PyTorch，直接复用当前环境：
+
+```bash
+cd /root/workspace/LLaMA-Factory
+python -m pip install -U pip
+python -m pip install -e .
+```
+
+检查 PyTorch：
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```
+
+只有 `torch.cuda.is_available()` 不是 `True` 时才重装 GPU 版 PyTorch，例如 CUDA 12.6：
+
+```bash
+python -m pip install torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cu126
+```
+
+当前配置是普通 LoRA，不需要 `bitsandbytes` 或 DeepSpeed。需要 QLoRA 时再装：
+
+```bash
+python -m pip install bitsandbytes
+```
+
+需要 DeepSpeed/ZeRO 时再装：
+
+```bash
+python -m pip install -r requirements/deepspeed.txt
+```
+
+## 10. 复制 LLaMA-Factory Template
+
+```bash
+cd /root/workspace/SafeAnywhere
+cp integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py \
+  /root/workspace/LLaMA-Factory/src/llamafactory/v1/plugins/model_plugins/templates/
+```
+
+训练配置使用：
+
+```yaml
+template: safeanywhere_qwen3_nothink
+```
+
+## 11. 模型路径
+
+当前训练配置默认使用：
+
+```yaml
+model: ../models/Qwen3-0.6B
+```
+
+在当前机器上对应：
 
 ```text
-build/<dataset_name>/
-  manifest.jsonl       # 初始样本与 replacement 清单
-  annotations.jsonl    # 通过校验的 teacher 输出
-  failed.jsonl         # 失败样本，仅存在失败时生成
-  sft_train.jsonl      # 最终 SFT 训练集
-  sft_val.jsonl        # 最终 SFT 验证集
-  report.json          # 数量、失败、replacement、位置、写入模式与 teacher 元数据
+/root/workspace/models/Qwen3-0.6B
 ```
 
-`report.json` 中的 `safety_think_position` 会统计安全块出现在 response 开头还是中间。
+如果换模型，修改：
 
-## 文档
+```text
+train/llamafactory/qwen3_lora_sft_debug.yaml
+train/llamafactory/qwen3_lora_sft_1500_v1.yaml
+```
 
-- 数据集设计：`docs/dataset/`
-- 方法说明：`docs/method/`
+示例：
+
+```yaml
+model: /path/to/Qwen3-4B-Instruct-2507
+model: ../models/Qwen3-4B-Instruct-2507
+model: Qwen/Qwen3-4B-Instruct-2507
+```
+
+数据路径和输出路径已经是仓库内相对路径。训练命令必须从 SafeAnywhere 根目录执行：
+
+```bash
+cd /root/workspace/SafeAnywhere
+```
+
+## 12. 验证 LLaMA-Factory Renderer Mask
+
+```bash
+cd /root/workspace/SafeAnywhere
+python scripts/05_validate_llamafactory_masks.py \
+  --renderer llamafactory \
+  --llamafactory-root /root/workspace/LLaMA-Factory
+```
+
+预期数量：
+
+```text
+train.rows = 1350
+train.dangerous_prefix = 450
+val.rows = 150
+val.dangerous_prefix = 50
+```
+
+## 13. Debug SFT
+
+```bash
+cd /root/workspace/SafeAnywhere
+USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
+  llamafactory-cli sft train/llamafactory/qwen3_lora_sft_debug.yaml
+```
+
+输出目录：
+
+```text
+runs/qwen3_safeanywhere_lora_debug/
+```
+
+## 14. 正式 1500 SFT
+
+```bash
+cd /root/workspace/SafeAnywhere
+USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
+  llamafactory-cli sft train/llamafactory/qwen3_lora_sft_1500_v1.yaml
+```
+
+输出目录：
+
+```text
+runs/qwen3_safeanywhere_lora_1500_v1/
+```
+
+## 15. 常用检查
+
+查看数据构造报告：
+
+```bash
+cat build/safechain_pilot_1k/report.json
+cat build/hex_phi_prefix_500/report.json
+cat build/mixed_safechain1k_prefix500/report.json
+```
+
+代码检查：
+
+```bash
+uv run ruff check .
+python -m py_compile \
+  scripts/03_merge_sft_pilot.py \
+  scripts/04_export_llamafactory_v1.py \
+  scripts/05_validate_llamafactory_masks.py \
+  integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py
+```
+
+## 16. Push 到 GitHub
+
+当前远端：
+
+```text
+https://github.com/zhb0119/SafeAnywhere
+```
+
+建议提交代码和配置，不提交 `data/`、`build/`、`runs/`、`.env`。
+
+```bash
+cd /root/workspace/SafeAnywhere
+git status
+git add \
+  .gitignore \
+  README.md \
+  scripts/03_merge_sft_pilot.py \
+  scripts/04_export_llamafactory_v1.py \
+  scripts/05_validate_llamafactory_masks.py \
+  integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py \
+  train/llamafactory
+
+git commit -m "Add LLaMA-Factory span-mask SFT workflow"
+git push origin main
+```
