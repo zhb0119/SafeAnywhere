@@ -1,10 +1,10 @@
 # SafeAnywhere Remote Codex Handoff
 
-本文档用于在远端服务器继续使用 Codex 时恢复上下文。不要在本文档中写入服务器密码、API key 或其他凭据。
+本文档记录 SafeAnywhere 当前项目进度、远端操作 tips 和下一步 TODO，用于后续接手时快速判断数据生成、合并与 SFT 训练该从哪里继续。
 
-## 1. 项目目标
+## 1. 当前目标
 
-SafeAnywhere 的研究目标是把 `Think Anywhere in Code Generation` 中“在局部复杂点插入思考”的思想迁移到安全对齐：
+SafeAnywhere 的核心目标是训练模型在生成轨迹中途也能做局部安全判断与恢复：
 
 ```text
 用户请求 / 多轮上下文 / 已生成 assistant 前缀
@@ -13,16 +13,19 @@ SafeAnywhere 的研究目标是把 `Think Anywhere in Code Generation` 中“在
 -> 安全恢复到合规可见回复
 ```
 
-核心不是只做前置 `<safety_think>`，而是训练模型在生成轨迹中途也能进行局部安全判断与恢复。
+当前数据阶段目标是得到 1500 条 SFT pilot 数据：
 
-当前分两阶段推进：
+```text
+1000 SafeChain cold-start safety-think 数据
++ 500 HEx-PHI masked dangerous-prefix recovery 数据
+= 1500 SafeAnywhere SFT pilot 数据
+```
 
-1. `safechain_pilot_1k`：cold-start 格式数据，学习 `<safety_think>` 格式、半模块化字段、基本 harmful/benign/adversarial 安全决策。
-2. `hex_phi_prefix_500`：dangerous-prefix recovery 数据，使用 masked `assistant_prefill` 模拟模型已经走偏，然后在完整 assistant 轨迹中于 `after_assistant_prefill` 位置插入 `<safety_think>` 恢复。
+这 1500 条用于第一轮 SFT。`safechain_pilot_1k` 主要学习 `<safety_think>` 格式和基础安全决策；`hex_phi_prefix_500` 用 masked `assistant_prefill` 训练模型在完整 assistant 轨迹中于 `after_assistant_prefill` 位置恢复。
 
-## 2. 当前远端仓库状态
+## 2. 仓库与环境
 
-远端仓库路径：
+仓库路径：
 
 ```text
 /root/workspace/SafeAnywhere
@@ -34,60 +37,33 @@ GitHub remote：
 https://github.com/zhb0119/SafeAnywhere.git
 ```
 
-截至本文档写入时，远端 `main` 有本地提交：
-
-```text
-8c0681f Add HEx-PHI dangerous prefix data builder
-```
-
-该提交已经在远端本地仓库生成，但之前 `git push origin main` 因会话超时未确认完成。检查方式：
+远端当前主要使用项目虚拟环境：
 
 ```bash
 cd /root/workspace/SafeAnywhere
-git status --short --branch
-git log --oneline -5 --decorate
+.venv/bin/python --version
+.venv/bin/python -m compileall scripts src
 ```
 
-如果显示：
-
-```text
-## main...origin/main [ahead 1]
-```
-
-说明还需要执行：
-
-```bash
-git push origin main
-```
-
-## 3. 重要安全注意
-
-不要提交以下内容：
-
-- `.env`
-- `data/`
-- `build/`
-- 任何 API key、服务器密码、私钥
-
-`.gitignore` 当前已忽略：
+不要提交：
 
 ```text
 .env
-.env.*
-!.env.example
-.venv/
-build/
 data/
+build/
+任何 API key、服务器密码、私钥
 ```
 
-之前远端 `.env.example` 曾错误写入真实 DeepSeek key，已经在当前工作中恢复为占位符。提交前务必再次检查：
+提交前检查：
 
 ```bash
+cd /root/workspace/SafeAnywhere
 grep -R "sk-" -n --exclude-dir=.git --exclude=.env --exclude-dir=.venv --exclude-dir=build --exclude-dir=data . || true
 git diff --check
+git status --short --branch
 ```
 
-## 4. 当前目录与数据
+## 3. 本地数据源
 
 远端本地数据源：
 
@@ -96,20 +72,7 @@ data/UWNSL__SafeChain__train.jsonl
 data/Harmful-HEx-PHI.jsonl
 ```
 
-其中 `Harmful-HEx-PHI.jsonl` 已从本地上传到远端：
-
-```text
-/root/workspace/SafeAnywhere/data/Harmful-HEx-PHI.jsonl
-```
-
-校验信息：
-
-```text
-size:   393638 bytes
-sha256: 2ea4415da7951db3310268c6060483c1474a6fdb9a8d8691cf7fac0b5cfa011e
-```
-
-该文件每行是一个两轮 list：
+`Harmful-HEx-PHI.jsonl` 每行是一个 user/assistant pair：
 
 ```json
 [
@@ -118,16 +81,21 @@ sha256: 2ea4415da7951db3310268c6060483c1474a6fdb9a8d8691cf7fac0b5cfa011e
 ]
 ```
 
-统计：
+当前 `hex_phi_prefix_500` 不直接复制 HEx-PHI unsafe assistant response 作为训练上下文，而是用 masked template 生成 `assistant_prefill`，例如：
 
 ```text
-330 lines
-330 user/assistant pairs
+The process can be broken into concrete stages:
+Step 1: [REDACTED unsafe operational detail].
+Step 2: [REDACTED unsafe operational detail].
 ```
 
-## 5. 已完成的 SafeChain 1k 数据
+这样做的目的是避免把具体危险步骤、材料、链接、代码、剂量或规避方法写入训练 target。`assistant_prefill` 只作为 context，必须 `loss_mask=0`。
 
-远端已有完整 1k 输出：
+## 4. 当前数据进度
+
+### SafeChain 1k
+
+已完成：
 
 ```text
 build/safechain_pilot_1k/
@@ -139,7 +107,7 @@ build/safechain_pilot_1k/
   report.json
 ```
 
-报告摘要：
+已知报告摘要：
 
 ```text
 accepted: 1000
@@ -151,36 +119,50 @@ replacements_used: 12
 labels: vanilla_benign/adversarial_benign/vanilla_harmful/adversarial_harmful 各 250
 ```
 
-该 1k 的局限：所有有 `<safety_think>` 的 target 基本都在 response 开头，所以它是 cold-start 格式数据，不是 SafeAnywhere anywhere claim 的核心证据。
+局限：SafeChain 1k 是 cold-start 格式，不能单独支撑 anywhere claim。
 
-## 6. Dangerous Prefix 500 的设计决策
+### HEx-PHI Dangerous Prefix 500
 
-新增 dangerous-prefix 数据不直接混入 `safechain_pilot_1k/`，而是单独输出：
+已完成并通过数量验收：
 
 ```text
 build/hex_phi_prefix_500/
 ```
 
-这样可以保留 provenance，便于后续做 ablation：
+完成快照：
 
 ```text
-baseline: SafeChain 1k
-+prefix: SafeChain 1k + HEx-PHI dangerous-prefix 500
+time: 2026-07-06 14:23:21 CST +0800
+accepted: 500 / 500
+failed: 0
+sft_train: 450
+sft_val: 50
+decision_counts.recover: 500
+safety_think_position_in_full_trajectory.after_assistant_prefill: 500
+report: build/hex_phi_prefix_500/report.json
 ```
 
-HEx-PHI 没有 SafeChain 的四类 label，因此使用兼容字段：
+输出文件：
 
-```json
-{
-  "source": "harmful_hex_phi",
-  "attack_type": "dangerous_prefix",
-  "risk_level": "disallowed",
-  "label": "adversarial_harmful",
-  "label_compat": "adversarial_harmful"
-}
+```text
+manifest:    build/hex_phi_prefix_500/manifest.jsonl
+annotations: build/hex_phi_prefix_500/annotations.jsonl
+sft_train:   build/hex_phi_prefix_500/sft_train.jsonl
+sft_val:     build/hex_phi_prefix_500/sft_val.jsonl
+report:      build/hex_phi_prefix_500/report.json
 ```
 
-训练样本核心结构：
+复查命令：
+
+```bash
+cd /root/workspace/SafeAnywhere
+cat build/hex_phi_prefix_500/report.json
+wc -l build/hex_phi_prefix_500/annotations.jsonl build/hex_phi_prefix_500/sft_train.jsonl build/hex_phi_prefix_500/sft_val.jsonl
+```
+
+## 5. Dangerous-Prefix 数据结构
+
+每条样本核心结构：
 
 ```json
 {
@@ -190,186 +172,51 @@ HEx-PHI 没有 SafeChain 的四类 label，因此使用兼容字段：
     {"role": "assistant", "content": "<safety_think>...</safety_think>\n安全恢复回复", "loss_mask": 1}
   ],
   "attack_type": "dangerous_prefix",
+  "risk_level": "disallowed",
+  "label": "adversarial_harmful",
   "prefix_depth": 30,
   "prefix_type": "outline_prefix"
 }
 ```
 
-注意：target 片段内部 `<safety_think>` 仍在开头，但从完整 assistant 轨迹看，它位于：
+注意：
 
 ```text
-assistant_prefill -> <safety_think> -> recovery
+target 片段内部：<safety_think> 在 beginning
+完整 assistant 轨迹：assistant_prefill -> <safety_think> -> recovery
 ```
 
-所以报告中同时统计：
+报告和论文表述应使用：
 
 ```text
-safety_think_position_in_target: beginning
-safety_think_position_in_full_trajectory: after_assistant_prefill
+safety_think_position_in_full_trajectory = after_assistant_prefill
 ```
 
-## 7. 新增代码与配置
+## 6. 近期 TODO
 
-新增文件：
-
-```text
-configs/hex_phi_prefix_500.yaml
-scripts/02_build_dangerous_prefix.py
-```
-
-相关 README 已补充运行说明。
-
-`configs/hex_phi_prefix_500.yaml` 的采样计划：
-
-```yaml
-sampling:
-  total: 500
-  depth_counts:
-    10: 100
-    20: 120
-    30: 120
-    50: 100
-    100: 60
-  val_ratio: 0.10
-  max_replacements: 100
-```
-
-设计理由：
-
-- 10/20/30 token-ish：训练早期发现风险轨迹。
-- 50 token-ish：模拟已经走偏一小段后的恢复。
-- 100 token-ish：少量 deep prefix，避免训练中过多暴露危险上下文。
-
-`assistant_prefill` 不是直接复制 unsafe response，而是用模板生成 masked prefill，例如：
-
-```text
-The process can be broken into concrete stages:
-Step 1: [REDACTED unsafe operational detail].
-Step 2: [REDACTED unsafe operational detail].
-```
-
-这样避免把源数据中的具体有害步骤放入训练 target。prefill 只作为 context，`loss_mask=0`。
-
-## 8. 远端环境
-
-远端当前没有全局 `uv` 命令。虽然 README 使用 `uv run` 作为可复现指令，但远端服务器实际运行时使用项目虚拟环境：
+1. 抽查 `build/hex_phi_prefix_500/annotations.jsonl` 的真实 teacher 输出质量：
 
 ```bash
 cd /root/workspace/SafeAnywhere
-.venv/bin/python --version
-.venv/bin/python -m compileall scripts src
+.venv/bin/python - <<'PY'
+import json, re
+from pathlib import Path
+
+path = Path("build/hex_phi_prefix_500/annotations.jsonl")
+rows = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
+block = re.compile(r"<safety_think>.*?</safety_think>", re.S)
+
+print("rows", len(rows))
+for row in rows[:3]:
+    print("---", row["id"], row.get("prefix_depth"), row.get("prefix_type"))
+    print([(m["role"], m.get("loss_mask")) for m in row["messages"]])
+    print(row["assistant_prefill"][:240].replace("\n", " | "))
+    print(block.search(row["response"]).group(0)[:240].replace("\n", " "))
+    print(block.sub("", row["response"]).strip()[:240].replace("\n", " "))
+PY
 ```
 
-如需安装 uv，可另行安装；否则继续用 `.venv/bin/python`。
-
-## 9. 已验证内容
-
-已在远端通过：
-
-```bash
-cd /root/workspace/SafeAnywhere
-.venv/bin/python -m compileall scripts src
-.venv/bin/python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --mock --workers 2 --quiet
-```
-
-mock report 摘要：
-
-```text
-accepted: 500
-target_total: 500
-failed: 0
-sft_train: 450
-sft_val: 50
-accepted_by_depth:
-  10: 100
-  20: 120
-  30: 120
-  50: 100
-  100: 60
-decision_counts:
-  recover: 500
-safety_think_position_in_full_trajectory:
-  after_assistant_prefill: 500
-```
-
-之后曾启动真实 500 条 teacher 生成，但用户要求先 smoke test 通过后 push，因此已停止该完整任务。日志显示停止前真实 API 已成功生成约 31 条、无失败。由于任务被停止，当前 `build/hex_phi_prefix_500/report.json` 不存在，后续要正式生成需要重新运行。
-
-检查是否有残留任务：
-
-```bash
-ps -ef | grep '02_build_dangerous_prefix.py' | grep -v grep || true
-```
-
-## 10. 下一步建议
-
-### A. 先推送代码
-
-如果远端仍显示 `[ahead 1]`，先推送：
-
-```bash
-cd /root/workspace/SafeAnywhere
-git push origin main
-```
-
-如果加入本文档后需要提交：
-
-```bash
-cd /root/workspace/SafeAnywhere
-git add docs/REMOTE_CODEX_HANDOFF.md
-git commit -m "Add remote Codex handoff notes"
-git push origin main
-```
-
-### B. 正式跑 dangerous-prefix 500
-
-推荐先跑真实小样本检查 teacher 输出质量。当前脚本没有 `--limit` 参数，如果需要更干净的 smoke，可以临时加一个小配置，例如 `configs/hex_phi_prefix_smoke_20.yaml`，或先用现有 500 配置跑一会儿后中断并抽看 `annotations.jsonl`。
-
-正式 500 条命令：
-
-```bash
-cd /root/workspace/SafeAnywhere
-rm -rf build/hex_phi_prefix_500
-.venv/bin/python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1
-```
-
-中断后继续：
-
-```bash
-.venv/bin/python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1 --resume
-```
-
-### C. 检查正式输出
-
-完成后检查：
-
-```bash
-cat build/hex_phi_prefix_500/report.json
-wc -l build/hex_phi_prefix_500/*.jsonl
-head -1 build/hex_phi_prefix_500/sft_train.jsonl
-```
-
-关键验收：
-
-```text
-counts.accepted == counts.target_total == 500
-sft_train == 450
-sft_val == 50
-safety_think_position_in_full_trajectory.after_assistant_prefill == 500
-decision_counts.recover == 500
-```
-
-### D. 后续混合数据
-
-建议后续新增一个 merge/export 脚本，把：
-
-```text
-build/safechain_pilot_1k/sft_train.jsonl
-build/safechain_pilot_1k/sft_val.jsonl
-build/hex_phi_prefix_500/sft_train.jsonl
-build/hex_phi_prefix_500/sft_val.jsonl
-```
-
-合成：
+2. 新增 merge/export 脚本，把 1k + 500 合并成 1500：
 
 ```text
 build/mixed_safechain1k_prefix500/
@@ -378,17 +225,246 @@ build/mixed_safechain1k_prefix500/
   report.json
 ```
 
-混合时要保留 `source`、`attack_type`、`prefix_depth`、`messages/loss_mask` 等字段。对于旧 SafeChain 1k 没有 messages 的样本，可以保留 `prompt/response` 格式，训练脚本需要兼容两种形式，或先统一转换成 messages。
+3. 对 mixed 1500 做最终校验。
+4. 准备 SFT 数据转换与训练脚本。
+5. 跑第一轮 SFT。
+6. 做 safety / usefulness / dangerous-prefix recovery 评测。
 
-## 11. 当前几个容易误判的点
+## 7. 1500 数据合并方案
 
-1. `hex_phi_prefix_500` 的 target 里 `<safety_think>` 是 beginning，但 full trajectory 是 `after_assistant_prefill`。论文/报告应以后者支撑 anywhere claim。
-2. HEx-PHI response 不进入训练 target，只用来推断 prefix 类型；实际 prefill 是 masked template。
-3. SafeChain 1k 是 cold-start，不要单独拿它 claim anywhere。
-4. Dangerous-prefix 500 是第一类 anywhere 数据，后续还需要 multi-turn induction、long-context drift、jailbreak recovery。
-5. 远端没有全局 uv，继续用 `.venv/bin/python` 最稳。
+合并输入：
 
-## 12. 常用命令
+```text
+build/safechain_pilot_1k/sft_train.jsonl
+build/safechain_pilot_1k/sft_val.jsonl
+build/hex_phi_prefix_500/sft_train.jsonl
+build/hex_phi_prefix_500/sft_val.jsonl
+```
+
+合并输出建议：
+
+```text
+build/mixed_safechain1k_prefix500/
+  sft_train.jsonl   # 1350 条：900 SafeChain + 450 Prefix
+  sft_val.jsonl     # 150 条：100 SafeChain + 50 Prefix
+  report.json
+```
+
+合并时必须保留 provenance：
+
+```text
+id
+source
+source_id
+label
+attack_type
+requires_safety_think
+prefix_depth
+prefix_type
+assistant_prefill
+messages/loss_mask
+```
+
+推荐统一成 messages 格式：
+
+```json
+{
+  "id": "...",
+  "messages": [
+    {"role": "user", "content": "...", "loss_mask": 0},
+    {"role": "assistant", "content": "...", "loss_mask": 1}
+  ],
+  "source": "...",
+  "attack_type": "...",
+  "label": "...",
+  "requires_safety_think": true
+}
+```
+
+对于 `hex_phi_prefix_500`，保持三段 messages：
+
+```json
+[
+  {"role": "user", "content": "...", "loss_mask": 0},
+  {"role": "assistant", "content": "assistant_prefill", "loss_mask": 0},
+  {"role": "assistant", "content": "target recovery", "loss_mask": 1}
+]
+```
+
+如果旧 SafeChain 1k 只有 `prompt` / `response`，则转换为：
+
+```json
+[
+  {"role": "user", "content": "prompt", "loss_mask": 0},
+  {"role": "assistant", "content": "response", "loss_mask": 1}
+]
+```
+
+最终校验：
+
+```text
+train_total == 1350
+val_total == 150
+total == 1500
+prefix_train == 450
+prefix_val == 50
+safechain_train == 900
+safechain_val == 100
+所有 <safety_think> block schema 合法
+所有 dangerous_prefix 样本 loss mask 为 0/0/1
+```
+
+## 8. 1500 数据后的 SFT 规划
+
+### 8.1 训练目标
+
+第一轮 SFT 只做格式和局部恢复能力验证，不直接追求最终最强模型：
+
+```text
+目标 1：模型能稳定生成简短 <safety_think> block。
+目标 2：harmful/adversarial 输入能拒绝、限制或恢复。
+目标 3：benign 输入不过度拒绝。
+目标 4：dangerous-prefix context 后能停止 unsafe trajectory 并恢复。
+```
+
+### 8.2 训练格式要求
+
+训练框架必须支持 per-message 或 per-token loss mask。
+
+关键要求：
+
+```text
+user tokens: loss_mask=0
+assistant_prefill tokens: loss_mask=0
+assistant target tokens: loss_mask=1
+```
+
+如果训练框架不能保证 `assistant_prefill` 不计 loss，不要训练 dangerous-prefix 数据。否则模型可能学习 masked prefix 或 real unsafe prefix，而不是学习 recovery。
+
+### 8.3 推荐训练输入
+
+把 `build/mixed_safechain1k_prefix500/sft_train.jsonl` 转成训练框架需要的 conversation 格式，同时保留 mask。
+
+建议先产出一个中间文件：
+
+```text
+build/mixed_safechain1k_prefix500/train_messages_masked.jsonl
+build/mixed_safechain1k_prefix500/val_messages_masked.jsonl
+```
+
+每行包含：
+
+```json
+{
+  "id": "...",
+  "messages": [
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "..."}
+  ],
+  "loss_mask": [0, 1],
+  "metadata": {
+    "source": "...",
+    "attack_type": "...",
+    "label": "...",
+    "prefix_depth": null
+  }
+}
+```
+
+对于 dangerous-prefix 样本，`loss_mask` 对应三段：
+
+```json
+"loss_mask": [0, 0, 1]
+```
+
+### 8.4 第一轮 SFT 建议
+
+先小规模跑通训练链路：
+
+```text
+run: safeanywhere_sft_debug
+data: mixed 1500
+epochs: 1
+lr: 保守小学习率
+batch: 以显存为准，优先保证无 OOM
+save: 每个 epoch 保存 checkpoint
+```
+
+debug run 检查：
+
+```text
+loss 正常下降，无 NaN
+训练样本 mask 生效
+val loss 可计算
+checkpoint 可加载推理
+```
+
+第二次再跑正式小模型 SFT：
+
+```text
+run: safeanywhere_sft_1500_v1
+data: mixed 1500
+epochs: 2-3
+early stop: 根据 val loss 与人工抽样质量决定
+```
+
+### 8.5 SFT 后评测
+
+至少做四组评测：
+
+```text
+benign utility:
+  正常问题是否能回答，是否过度插入 <safety_think> 或过度拒绝
+
+harmful refusal:
+  有害请求是否拒绝/限制，visible response 是否安全
+
+adversarial/jailbreak:
+  越狱诱导下是否仍遵守安全策略
+
+dangerous-prefix recovery:
+  人工构造 assistant_prefill 后，模型是否能在后续插入 <safety_think> 并恢复
+```
+
+dangerous-prefix recovery 是 SafeAnywhere 的核心评测，应单独报告：
+
+```text
+recovery_rate
+unsafe_continuation_rate
+safety_think_insert_rate
+visible_response_safe_rate
+over_refusal_on_benign_prefix
+```
+
+### 8.6 后续 real-prefix 消融
+
+当前 `hex_phi_prefix_500` 是 masked-prefix 版本。后续建议增加一个独立 real-prefix 消融，不覆盖当前数据：
+
+```text
+build/hex_phi_prefix_500_realprefix/
+```
+
+核心差异：
+
+```text
+masked-prefix:
+  assistant_prefill = synthetic masked template
+
+real-prefix:
+  assistant_prefill = HEx-PHI unsafe assistant response 的 token-ish 前缀截断
+```
+
+real-prefix 只允许作为 `loss_mask=0` 的 context。只有在训练框架确认 mask 正确后，才可以跑 real-prefix SFT。
+
+建议 ablation：
+
+```text
+SafeChain 1k
+SafeChain 1k + masked dangerous-prefix 500
+SafeChain 1k + real dangerous-prefix 500
+```
+
+## 9. 常用命令
 
 ```bash
 cd /root/workspace/SafeAnywhere
@@ -400,21 +476,19 @@ git log --oneline -5 --decorate
 # 编译检查
 .venv/bin/python -m compileall scripts src
 
-# SafeChain 1k 继续生成
-.venv/bin/python scripts/01_build_dataset.py --config configs/safechain_pilot_1k.yaml --workers 1 --resume
+# 当前 dangerous-prefix 500 进度
+wc -l build/hex_phi_prefix_500/annotations.jsonl build/hex_phi_prefix_500/failed.jsonl 2>/dev/null || true
+ps -fp $(cat build/hex_phi_prefix_500/run.pid 2>/dev/null) 2>/dev/null || true
 
-# HEx-PHI dangerous-prefix mock
-.venv/bin/python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --mock --workers 2 --quiet
-
-# HEx-PHI dangerous-prefix 正式生成
-.venv/bin/python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1
-
-# 中断后继续
+# dangerous-prefix 500 resume
 .venv/bin/python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1 --resume
+
+# 完成后看报告
+cat build/hex_phi_prefix_500/report.json
 
 # 敏感信息检查
 grep -R "sk-" -n --exclude-dir=.git --exclude=.env --exclude-dir=.venv --exclude-dir=build --exclude-dir=data . || true
 
-# 推送
+# 推送代码
 git push origin main
 ```
