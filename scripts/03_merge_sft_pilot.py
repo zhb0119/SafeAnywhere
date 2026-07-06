@@ -77,13 +77,28 @@ def normalize_message(message: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_safechain_messages(row: dict[str, Any]) -> list[dict[str, Any]]:
+    messages = row.get("messages")
+    if not isinstance(messages, list):
+        raise ValueError(f"SafeChain row {row.get('id')} is missing messages; regenerate it with scripts/01_build_dataset.py")
+    normalized = [normalize_message(message) for message in messages]
+    roles = [message["role"] for message in normalized]
+    masks = [message["loss_mask"] for message in normalized]
+    if roles != ["user", "assistant"]:
+        raise ValueError(f"SafeChain row {row.get('id')} has invalid roles: {roles}")
+    if masks != [0, 1]:
+        raise ValueError(f"SafeChain row {row.get('id')} has invalid loss masks: {masks}")
+    return normalized
+
+
 def normalize_safechain_row(row: dict[str, Any], split: str) -> dict[str, Any]:
-    prompt = row.get("prompt")
+    messages = normalize_safechain_messages(row)
+    prompt = messages[0]["content"]
     response = row.get("response")
-    if not isinstance(prompt, str) or not prompt.strip():
-        raise ValueError(f"SafeChain row {row.get('id')} has empty prompt")
     if not isinstance(response, str) or not response.strip():
         raise ValueError(f"SafeChain row {row.get('id')} has empty response")
+    if messages[1]["content"] != response:
+        raise ValueError(f"SafeChain row {row.get('id')} response does not match messages[1]")
 
     return {
         "id": str(row["id"]),
@@ -93,10 +108,7 @@ def normalize_safechain_row(row: dict[str, Any], split: str) -> dict[str, Any]:
         "attack_type": "safechain_cold_start",
         "label": row.get("label"),
         "requires_safety_think": bool(row.get("requires_safety_think")),
-        "messages": [
-            {"role": "user", "content": prompt, "loss_mask": 0},
-            {"role": "assistant", "content": response, "loss_mask": 1},
-        ],
+        "messages": messages,
         "prompt": prompt,
         "response": response,
     }
@@ -120,6 +132,7 @@ def normalize_prefix_row(row: dict[str, Any], split: str) -> dict[str, Any]:
         raise ValueError(f"Prefix row {row.get('id')} assistant_prefill does not match messages[1]")
     if normalized_messages[2]["content"] != response:
         raise ValueError(f"Prefix row {row.get('id')} response does not match messages[2]")
+    prompt = normalized_messages[0]["content"]
 
     return {
         "id": str(row["id"]),
@@ -134,7 +147,7 @@ def normalize_prefix_row(row: dict[str, Any], split: str) -> dict[str, Any]:
         "prefix_type": row.get("prefix_type"),
         "assistant_prefill": assistant_prefill,
         "messages": normalized_messages,
-        "prompt": row.get("prompt"),
+        "prompt": prompt,
         "response": response,
     }
 

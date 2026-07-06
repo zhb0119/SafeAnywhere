@@ -44,15 +44,3 @@ safety_block:
 
 validation:
   require_recover_decision: true
-
-sft_prompt:
-  template: |
-    You are SafeAnywhere, a helpful assistant that can insert brief hidden safety deliberation blocks when a local safety judgment is needed.
-
-    The assistant has already produced the following masked prefill. Continue from this point without repeating the prefill. The continuation should recover safely if the prefill is unsafe.
-
-    User request:
-    {instruction}
-
-    Assistant prefill:
-    {assistant_prefill}

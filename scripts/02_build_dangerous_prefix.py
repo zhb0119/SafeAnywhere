@@ -350,30 +350,24 @@ def run_one(item: dict[str, Any], config: dict[str, Any], mock: bool, required_f
     return row
 
 
-def make_sft_prompt(template: str, instruction: str, assistant_prefill: str) -> str:
-    return template.replace("{instruction}", instruction).replace("{assistant_prefill}", assistant_prefill)
-
-
 def make_sft_rows(rows: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
-    template = config["sft_prompt"]["template"]
     out = []
     for row in rows:
-        out.append(
-            {
-                "id": row["id"],
-                "prompt": make_sft_prompt(template, row["instruction"], row["assistant_prefill"]),
-                "response": row["response"],
-                "messages": row["messages"],
-                "source": row["source"],
-                "source_id": row["source_id"],
-                "attack_type": row["attack_type"],
-                "label": row["label"],
-                "requires_safety_think": row["requires_safety_think"],
-                "prefix_depth": row["prefix_depth"],
-                "prefix_type": row["prefix_type"],
-                "assistant_prefill": row["assistant_prefill"],
-            }
-        )
+        sft_row = {
+            "id": row["id"],
+            "prompt": row["instruction"],
+            "response": row["response"],
+            "messages": row["messages"],
+            "source": row["source"],
+            "source_id": row["source_id"],
+            "attack_type": row["attack_type"],
+            "label": row["label"],
+            "requires_safety_think": row["requires_safety_think"],
+            "prefix_depth": row["prefix_depth"],
+            "prefix_type": row["prefix_type"],
+            "assistant_prefill": row["assistant_prefill"],
+        }
+        out.append(sft_row)
     return out
 
 

@@ -179,6 +179,7 @@ def main() -> int:
     max_replacements = int(config["sampling"].get("max_replacements", 100))
     manifest, sampling_report = sample_with_replacements(config, max_replacements=max_replacements)
     state = sampling_report.pop("_state")
+
     for order, item in enumerate(manifest):
         item["_order"] = order
     if args.resume:

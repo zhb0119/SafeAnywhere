@@ -1,0 +1,3 @@
+safeanywhere_train:
+  path: build/mixed_safechain1k_prefix500/train_lf_v1_spanmasked.jsonl
+  source: local

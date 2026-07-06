@@ -3,21 +3,25 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from .prompts import build_sft_prompt
-
 
 def make_sft_rows(rows: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
-    template = config["sft_prompt"]["template"]
-    return [
-        {
+    out = []
+    for row in rows:
+        instruction = row["instruction"]
+        response = row["response"]
+        sft_row = {
             "id": row["id"],
-            "prompt": build_sft_prompt(template, row["instruction"]),
-            "response": row["response"],
+            "prompt": instruction,
+            "response": response,
             "label": row["label"],
             "requires_safety_think": row["requires_safety_think"],
+            "messages": [
+                {"role": "user", "content": instruction, "loss_mask": 0},
+                {"role": "assistant", "content": response, "loss_mask": 1},
+            ],
         }
-        for row in rows
-    ]
+        out.append(sft_row)
+    return out
 
 
 def split_train_val(rows: list[dict[str, Any]], seed: int, val_ratio: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

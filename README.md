@@ -306,7 +306,208 @@ USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
 runs/qwen3_safeanywhere_lora_1500_v1/
 ```
 
-## 15. 常用检查
+## 15. SafeAnywhere 自定义评测
+
+构造 held-out eval。默认从 mixed val 生成 direct harmful、prefix recovery、benign utility、over-refusal 四类样本。
+
+```bash
+cd /root/workspace/SafeAnywhere
+uv run python scripts/06_build_eval_sets.py
+```
+
+产物：
+
+```text
+build/eval/safeanywhere_v1/safeanywhere_eval.jsonl
+build/eval/safeanywhere_v1/prefix_recovery.jsonl
+build/eval/safeanywhere_v1/harmful_direct.jsonl
+build/eval/safeanywhere_v1/benign_utility.jsonl
+build/eval/safeanywhere_v1/over_refusal.jsonl
+build/eval/safeanywhere_v1/report.json
+```
+
+先评测 base model：
+
+```bash
+cd /root/workspace/SafeAnywhere
+python scripts/07_generate_eval_responses.py \
+  --base-model ../models/Qwen3-0.6B \
+  --output build/eval/safeanywhere_v1/base_predictions.jsonl
+
+python scripts/08_score_eval_results.py \
+  --input build/eval/safeanywhere_v1/base_predictions.jsonl \
+  --scored-output build/eval/safeanywhere_v1/base_predictions_scored.jsonl \
+  --summary-output build/eval/safeanywhere_v1/base_score_summary.json
+```
+
+再评测 SFT LoRA：
+
+```bash
+cd /root/workspace/SafeAnywhere
+python scripts/07_generate_eval_responses.py \
+  --base-model ../models/Qwen3-0.6B \
+  --adapter runs/qwen3_safeanywhere_lora_1500_v1 \
+  --output build/eval/safeanywhere_v1/sft_predictions.jsonl
+
+python scripts/08_score_eval_results.py \
+  --input build/eval/safeanywhere_v1/sft_predictions.jsonl \
+  --scored-output build/eval/safeanywhere_v1/sft_predictions_scored.jsonl \
+  --summary-output build/eval/safeanywhere_v1/sft_score_summary.json
+```
+
+对比 base 和 SFT：
+
+```bash
+python scripts/09_compare_eval_reports.py \
+  --base build/eval/safeanywhere_v1/base_score_summary.json \
+  --candidate build/eval/safeanywhere_v1/sft_score_summary.json
+```
+
+核心关注：
+
+```text
+prefix_recovery.prefix_recovery_success_rate  越高越好
+prefix_recovery.unsafe_continuation_rate      越低越好
+harmful_direct.harmful_safe_response_rate     越高越好
+benign_utility.benign_answer_rate             越高越好
+over_refusal.over_refusal_rate                越低越好
+safety_think_rate                             看方法是否学会触发 <safety_think>
+```
+
+快速 smoke 可加 `--limit`：
+
+```bash
+python scripts/07_generate_eval_responses.py \
+  --base-model ../models/Qwen3-0.6B \
+  --adapter runs/qwen3_safeanywhere_lora_debug \
+  --limit 20 \
+  --output build/eval/safeanywhere_v1/debug_predictions.jsonl
+```
+
+这些脚本的启发式打分只用于本地 smoke。论文或正式报告建议再跑 HarmBench、JailbreakBench、XSTest 和 lm-eval。
+
+## 16. 外部 Benchmark
+
+准备外部 benchmark prompt。默认会下载/转换 AdvBench、XSTest、JailbreakBench 到统一 JSONL。
+
+```bash
+cd /root/workspace/SafeAnywhere
+python scripts/10_prepare_external_benchmarks.py \
+  --benchmarks advbench xstest jailbreakbench \
+  --output-dir build/eval/external
+```
+
+产物：
+
+```text
+build/eval/external/advbench/advbench_eval.jsonl
+build/eval/external/xstest/xstest_eval.jsonl
+build/eval/external/jailbreakbench/jbb_eval.jsonl
+build/eval/external/external_benchmarks_report.json
+```
+
+快速 smoke 可加 `--limit`：
+
+```bash
+python scripts/10_prepare_external_benchmarks.py \
+  --benchmarks advbench xstest \
+  --limit 20 \
+  --output-dir build/eval/external_smoke
+```
+
+生成并启发式打分 base model：
+
+```bash
+python scripts/11_run_external_generation_eval.py \
+  --benchmarks advbench xstest jailbreakbench \
+  --base-model ../models/Qwen3-0.6B \
+  --run-name base \
+  --output-dir build/eval/external
+```
+
+生成并启发式打分 SFT LoRA：
+
+```bash
+python scripts/11_run_external_generation_eval.py \
+  --benchmarks advbench xstest jailbreakbench \
+  --base-model ../models/Qwen3-0.6B \
+  --adapter runs/qwen3_safeanywhere_lora_1500_v1 \
+  --run-name sft \
+  --output-dir build/eval/external
+```
+
+对应 summary 文件：
+
+```text
+build/eval/external/advbench/base_score_summary.json
+build/eval/external/advbench/sft_score_summary.json
+build/eval/external/xstest/base_score_summary.json
+build/eval/external/xstest/sft_score_summary.json
+build/eval/external/jailbreakbench/base_score_summary.json
+build/eval/external/jailbreakbench/sft_score_summary.json
+```
+
+对比某个 benchmark：
+
+```bash
+python scripts/09_compare_eval_reports.py \
+  --base build/eval/external/advbench/base_score_summary.json \
+  --candidate build/eval/external/advbench/sft_score_summary.json
+```
+
+生成 lm-eval / HarmBench 辅助命令：
+
+```bash
+python scripts/12_write_external_benchmark_commands.py \
+  --output-dir build/eval/external/commands
+```
+
+会写出：
+
+```text
+build/eval/external/commands/merge_lora.sh
+build/eval/external/commands/lm_eval.sh
+build/eval/external/commands/harmbench.sh
+```
+
+执行顺序：
+
+```bash
+bash build/eval/external/commands/merge_lora.sh
+bash build/eval/external/commands/lm_eval.sh
+bash build/eval/external/commands/harmbench.sh
+```
+
+外部 benchmark 来源：
+
+```text
+HarmBench:       https://github.com/centerforaisafety/HarmBench
+JailbreakBench: https://github.com/JailbreakBench/jailbreakbench
+AdvBench:       https://github.com/llm-attacks/llm-attacks
+XSTest:         https://github.com/paul-rottger/xstest
+```
+
+Utility：
+
+```text
+lm-evaluation-harness: https://github.com/EleutherAI/lm-evaluation-harness
+MMLU / GSM8K / ARC / HellaSwag / TruthfulQA / IFEval
+```
+
+推荐最终表格至少包含：
+
+```text
+HarmBench ASR ↓
+JailbreakBench ASR ↓
+AdvBench harmful compliance ↓
+XSTest safe refusal ↓
+SafeAnywhere prefix recovery success ↑
+SafeAnywhere unsafe continuation ↓
+IFEval ↑
+MMLU / GSM8K / ARC ↑
+```
+
+## 17. 常用检查
 
 查看数据构造报告：
 
@@ -324,10 +525,17 @@ python -m py_compile \
   scripts/03_merge_sft_pilot.py \
   scripts/04_export_llamafactory_v1.py \
   scripts/05_validate_llamafactory_masks.py \
+  scripts/06_build_eval_sets.py \
+  scripts/07_generate_eval_responses.py \
+  scripts/08_score_eval_results.py \
+  scripts/09_compare_eval_reports.py \
+  scripts/10_prepare_external_benchmarks.py \
+  scripts/11_run_external_generation_eval.py \
+  scripts/12_write_external_benchmark_commands.py \
   integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py
 ```
 
-## 16. Push 到 GitHub
+## 18. Push 到 GitHub
 
 当前远端：
 
@@ -346,6 +554,13 @@ git add \
   scripts/03_merge_sft_pilot.py \
   scripts/04_export_llamafactory_v1.py \
   scripts/05_validate_llamafactory_masks.py \
+  scripts/06_build_eval_sets.py \
+  scripts/07_generate_eval_responses.py \
+  scripts/08_score_eval_results.py \
+  scripts/09_compare_eval_reports.py \
+  scripts/10_prepare_external_benchmarks.py \
+  scripts/11_run_external_generation_eval.py \
+  scripts/12_write_external_benchmark_commands.py \
   integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py \
   train/llamafactory
 

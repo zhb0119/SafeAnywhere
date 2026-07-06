@@ -128,7 +128,3 @@ def build_teacher_prompt(label: str, instruction: str, requires_safety_think: bo
     User request:
     {instruction}
     """)
-
-
-def build_sft_prompt(template: str, instruction: str) -> str:
-    return template.replace("{instruction}", instruction)
