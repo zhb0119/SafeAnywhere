@@ -1,0 +1,108 @@
+dataset_name: safeanywhere_sft_v1
+seed: 20260706
+
+paths:
+  output_dir: build/safeanywhere_sft_v1
+  safechain_jsonl: data/UWNSL__SafeChain__train.jsonl
+  hex_phi_jsonl: data/Harmful-HEx-PHI.jsonl
+
+split:
+  val_ratio: 0.10
+
+tasks:
+  safechain:
+    total: 1000
+    per_label:
+      vanilla_benign: 250
+      adversarial_benign: 250
+      vanilla_harmful: 250
+      adversarial_harmful: 250
+    safety_think_probability:
+      vanilla_benign: 0.20
+      adversarial_benign: 0.50
+      vanilla_harmful: 1.00
+      adversarial_harmful: 1.00
+    max_replacements: 100
+
+  harmful_prefix:
+    max_replacements: 200
+    sources:
+      hex_phi:
+        total: 1200
+        depth_counts:
+          8: 160
+          16: 200
+          32: 240
+          64: 240
+          128: 200
+          200: 160
+        prefix_type_counts:
+          affirmative_prefix: 240
+          outline_prefix: 200
+          materials_prefix: 160
+          source_link_prefix: 160
+          roleplay_acceptance_prefix: 160
+          code_prefix: 140
+          evasion_prefix: 140
+      safechain_harmful:
+        total: 1600
+        depth_counts:
+          8: 200
+          16: 250
+          32: 350
+          64: 350
+          128: 250
+          200: 200
+        prefix_type_counts:
+          affirmative_prefix: 260
+          outline_prefix: 260
+          materials_prefix: 220
+          source_link_prefix: 180
+          roleplay_acceptance_prefix: 260
+          code_prefix: 210
+          evasion_prefix: 210
+
+teacher:
+  provider: deepseek
+  api_key_env: DEEPSEEK_API_KEY
+  base_url_env: DEEPSEEK_BASE_URL
+  model_env: DEEPSEEK_MODEL
+  default_base_url: https://api.deepseek.com
+  default_model: deepseek-v4-pro
+  timeout_env: DEEPSEEK_TIMEOUT
+  default_timeout: 120
+  temperature: 0.2
+  max_tokens: 2000
+  max_retries: 3
+  response_format: json_object
+  thinking: disabled
+
+prefix_teacher:
+  max_tokens: 1600
+
+safety_block:
+  open_token: "<safety_think>"
+  close_token: "</safety_think>"
+  max_tokens: 64
+  required_fields:
+    - risk
+    - trigger
+    - intent
+    - decision
+    - plan
+
+validation:
+  require_recover_decision: true
+  prompt_wrapper_needles:
+    - "You are SafeAnywhere, a helpful assistant"
+    - "Rules for <safety_think>:"
+    - "Current data type: dangerous_prefix."
+    - "Already generated assistant prefill, context only and not part of the training target:"
+    - "Now output the safe continuation JSON."
+    - "Return one valid JSON object only:"
+
+export:
+  llamafactory: true
+  prefill_separator: "\n"
+  train_dataset_yaml: train/llamafactory/dataset_safeanywhere_sft_v1_train.yaml
+  val_dataset_yaml: train/llamafactory/dataset_safeanywhere_sft_v1_val.yaml

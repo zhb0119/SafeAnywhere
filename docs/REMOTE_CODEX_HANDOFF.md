@@ -2,6 +2,41 @@
 
 本文档记录 SafeAnywhere 当前项目进度、远端操作 tips 和下一步 TODO，用于后续接手时快速判断数据生成、合并与 SFT 训练该从哪里继续。
 
+## 0. 当前默认数据入口
+
+当前默认数据构造入口已经收敛为一条命令：
+
+```bash
+cd /root/workspace/SafeAnywhere
+uv run python scripts/build_sft_dataset.py \
+  --config configs/safeanywhere_sft_v1.yaml \
+  --workers 1 \
+  --quiet
+```
+
+默认产物：
+
+```text
+build/safeanywhere_sft_v1/
+  safechain/
+  harmful_prefix/
+  sft_train.jsonl
+  sft_val.jsonl
+  train_lf_v1_spanmasked.jsonl
+  val_lf_v1_spanmasked.jsonl
+  report.json
+  dataset_card.md
+```
+
+当前默认数据类型只暴露两类：
+
+```text
+safechain       # cold-start safety-think
+harmful_prefix  # masked assistant-prefix recovery, internally from HEx-PHI + SafeChain harmful prompts
+```
+
+下面关于 1500 pilot / prefix500 的内容保留为历史上下文；新复现优先按 README 和 `configs/safeanywhere_sft_v1.yaml` 执行。
+
 ## 1. 当前目标
 
 SafeAnywhere 的核心目标是训练模型在生成轨迹中途也能做局部安全判断与恢复：

@@ -1,14 +1,15 @@
 # SafeAnywhere
 
-SafeAnywhere 当前默认构建 prefix2800 版 safety-think SFT 数据：
+SafeAnywhere 当前默认构建 `safeanywhere_sft_v1` safety-think SFT 数据：
 
 - SafeChain cold-start safety-think：1000 条
-- HEx-PHI masked dangerous-prefix recovery：1200 条
-- SafeChain harmful/adversarial harmful masked prefix recovery：1600 条
+- harmful_prefix：2800 条
+  - HEx-PHI masked prefix recovery：1200 条
+  - SafeChain harmful/adversarial harmful masked prefix recovery：1600 条
 - mixed 3800 SFT：3420 train / 380 val
 - LLaMA-Factory v1 span-level mask 训练
 
-SFT 数据里的 `prompt` 固定为原始 user request。Teacher prompt 只用于生成 teacher target，不会写入 SFT/eval prompt。Dangerous-prefix 样本通过 `messages` 和 LLaMA-Factory content span 实现：`assistant_prefill` 为 `loss_mask=0`，只有 `<safety_think>...</safety_think>` recovery target 参与 loss。
+SFT 数据里的 `prompt` 固定为原始 user request。Teacher prompt 只用于生成 teacher target，不会写入 SFT/eval prompt。`harmful_prefix` 样本通过 `messages` 和 LLaMA-Factory content span 实现：`assistant_prefill` 为 `loss_mask=0`，只有 `<safety_think>...</safety_think>` recovery target 参与 loss。
 
 ## 1. SafeAnywhere 环境
 
@@ -54,65 +55,68 @@ data/Harmful-HEx-PHI.jsonl
 默认只跑这一条命令：
 
 ```bash
-bash scripts/15_build_prefix2800_dataset.sh
+uv run python scripts/build_sft_dataset.py \
+  --config configs/safeanywhere_sft_v1.yaml \
+  --workers 1 \
+  --quiet
 ```
 
 它会按顺序完成：
 
 ```text
 SafeChain cold-start 1000
-HEx-PHI dangerous-prefix 1200
-SafeChain harmful-prefix 1600
-merge -> mixed_safechain1k_prefix2800
+harmful_prefix/hex_phi 1200
+harmful_prefix/safechain_harmful 1600
+merge -> safeanywhere_sft_v1
 export -> LLaMA-Factory span-mask JSONL
 validate -> structure-only mask check
 ```
 
-关键约束不变：所有 dangerous-prefix 样本都是 `user=0 / assistant_prefill=0 / recovery_target=1`，也就是 prefix 只作为 masked context，不参与 loss。
-
-Prefix type 扩展不是单独命令，已经写入 `configs/hex_phi_prefix_1200.yaml` 和 `configs/safechain_prefix_1600.yaml`。SafeChain 1600 默认覆盖 `affirmative_prefix`、`outline_prefix`、`materials_prefix`、`source_link_prefix`、`roleplay_acceptance_prefix`、`code_prefix`、`evasion_prefix`。
+关键约束不变：所有 `harmful_prefix` 样本都是 `user=0 / assistant_prefill=0 / recovery_target=1`，也就是 prefix 只作为 masked context，不参与 loss。
 
 常用参数：
 
 ```bash
 # 中断后续跑
-RESUME=1 bash scripts/15_build_prefix2800_dataset.sh
+uv run python scripts/build_sft_dataset.py --resume --quiet
 
 # 并发 teacher 请求
-WORKERS=2 bash scripts/15_build_prefix2800_dataset.sh
+uv run python scripts/build_sft_dataset.py --workers 2 --quiet
 
 # 不调用 teacher，只验证流程和 mask
-MOCK=1 bash scripts/15_build_prefix2800_dataset.sh
+uv run python scripts/build_sft_dataset.py --mock --quiet
 
-# 打印完整阶段输出；默认完整日志写入 build/mixed_safechain1k_prefix2800/build_prefix2800.log
-VERBOSE=1 bash scripts/15_build_prefix2800_dataset.sh
+# 打印完整阶段输出；默认完整日志写入 build/safeanywhere_sft_v1/build.log
+uv run python scripts/build_sft_dataset.py --verbose
 ```
 
 主产物：
 
 ```text
-build/mixed_safechain1k_prefix2800/sft_train.jsonl
-build/mixed_safechain1k_prefix2800/sft_val.jsonl
-build/mixed_safechain1k_prefix2800/train_lf_v1_spanmasked.jsonl
-build/mixed_safechain1k_prefix2800/val_lf_v1_spanmasked.jsonl
-train/llamafactory/dataset_safeanywhere_prefix2800_train.yaml
-train/llamafactory/dataset_safeanywhere_prefix2800_val.yaml
+build/safeanywhere_sft_v1/safechain/
+build/safeanywhere_sft_v1/harmful_prefix/
+build/safeanywhere_sft_v1/sft_train.jsonl
+build/safeanywhere_sft_v1/sft_val.jsonl
+build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl
+build/safeanywhere_sft_v1/val_lf_v1_spanmasked.jsonl
+train/llamafactory/dataset_safeanywhere_sft_v1_train.yaml
+train/llamafactory/dataset_safeanywhere_sft_v1_val.yaml
 ```
 
 报告：
 
 ```text
-build/safechain_pilot_1k/report.json
-build/hex_phi_prefix_1200/report.json
-build/safechain_prefix_1600/report.json
-build/mixed_safechain1k_prefix2800/report.json
-build/mixed_safechain1k_prefix2800/llamafactory_v1_export_report.json
-build/mixed_safechain1k_prefix2800/build_prefix2800.log
+build/safeanywhere_sft_v1/report.json
+build/safeanywhere_sft_v1/dataset_card.md
+build/safeanywhere_sft_v1/build.log
+build/safeanywhere_sft_v1/safechain/report.json
+build/safeanywhere_sft_v1/harmful_prefix/report.json
+build/safeanywhere_sft_v1/llamafactory_v1_export_report.json
 ```
 
-## 4. Legacy 1500 Pilot
+## 4. Legacy 数据脚本
 
-只在复现早期 1500 条 pilot 时使用：
+默认不要直接调用旧分步脚本。只在复现早期 1500 条 pilot 或调试单阶段时使用：
 
 ```bash
 uv run python scripts/01_build_dataset.py --config configs/safechain_pilot_1k.yaml --workers 1
@@ -127,38 +131,6 @@ uv run python scripts/04_export_llamafactory_v1.py
 build/mixed_safechain1k_prefix500/
 train/llamafactory/dataset_safeanywhere_1500_train.yaml
 train/llamafactory/dataset_safeanywhere_1500_val.yaml
-```
-
-检查没有 prompt wrapper 泄漏：
-
-```bash
-python - <<'PY'
-import json
-from pathlib import Path
-
-paths = [
-    Path("build/safechain_pilot_1k/sft_train.jsonl"),
-    Path("build/safechain_pilot_1k/sft_val.jsonl"),
-    Path("build/hex_phi_prefix_1200/sft_train.jsonl"),
-    Path("build/hex_phi_prefix_1200/sft_val.jsonl"),
-    Path("build/safechain_prefix_1600/sft_train.jsonl"),
-    Path("build/safechain_prefix_1600/sft_val.jsonl"),
-    Path("build/mixed_safechain1k_prefix2800/sft_train.jsonl"),
-    Path("build/mixed_safechain1k_prefix2800/sft_val.jsonl"),
-]
-needles = ["You are SafeAnywhere", "Rules for <safety_think>", "User request:", "Assistant prefill:"]
-bad = []
-for path in paths:
-    for line_no, line in enumerate(path.open(encoding="utf-8"), 1):
-        row = json.loads(line)
-        if any(s in json.dumps(row, ensure_ascii=False) for s in needles):
-            bad.append((str(path), line_no, row.get("id")))
-            break
-print("prompt_wrapper_leak_count", len(bad))
-if bad:
-    print(bad[:10])
-    raise SystemExit(1)
-PY
 ```
 
 ## 5. LLaMA-Factory
@@ -199,13 +171,13 @@ cp integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py \
 cd /root/workspace/SafeAnywhere
 uv run python scripts/05_validate_llamafactory_masks.py \
   --structure-only \
-  --train build/mixed_safechain1k_prefix2800/train_lf_v1_spanmasked.jsonl \
-  --val build/mixed_safechain1k_prefix2800/val_lf_v1_spanmasked.jsonl
+  --train build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl \
+  --val build/safeanywhere_sft_v1/val_lf_v1_spanmasked.jsonl
 
 USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
   python scripts/05_validate_llamafactory_masks.py \
-  --train build/mixed_safechain1k_prefix2800/train_lf_v1_spanmasked.jsonl \
-  --val build/mixed_safechain1k_prefix2800/val_lf_v1_spanmasked.jsonl \
+  --train build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl \
+  --val build/safeanywhere_sft_v1/val_lf_v1_spanmasked.jsonl \
   --renderer llamafactory \
   --llamafactory-root /root/workspace/LLaMA-Factory \
   --max-render-checks 2000
@@ -231,7 +203,7 @@ val.dangerous_prefix = 280
 如需替换模型，修改：
 
 ```text
-train/llamafactory/qwen3_lora_sft_prefix2800_v1.yaml
+train/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1.yaml
 ```
 
 Debug：
@@ -247,13 +219,13 @@ USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
 ```bash
 cd /root/workspace/SafeAnywhere
 USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
-  llamafactory-cli sft train/llamafactory/qwen3_lora_sft_prefix2800_v1.yaml
+  llamafactory-cli sft train/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1.yaml
 ```
 
 输出：
 
 ```text
-runs/qwen3_safeanywhere_lora_prefix2800_v1/
+runs/qwen3_safeanywhere_lora_sft_v1/
 ```
 
 ## 8. 自定义评测
@@ -314,7 +286,7 @@ SFT：
 python scripts/11_run_external_generation_eval.py \
   --benchmarks advbench xstest jailbreakbench \
   --base-model ../models/Qwen3-0.6B \
-  --adapter runs/qwen3_safeanywhere_lora_1500_v1 \
+  --adapter runs/qwen3_safeanywhere_lora_sft_v1 \
   --run-name sft \
   --output-dir build/eval/external
 ```
@@ -336,6 +308,7 @@ bash build/eval/external/commands/harmbench.sh
 uv run ruff check .
 python -m py_compile \
   src/safeanywhere/*.py \
+  scripts/build_sft_dataset.py \
   scripts/01_build_dataset.py \
   scripts/02_build_dangerous_prefix.py \
   scripts/02b_build_safechain_prefix.py \
@@ -360,6 +333,6 @@ bash -n scripts/15_build_prefix2800_dataset.sh
 cd /root/workspace/SafeAnywhere
 git status
 git add README.md configs scripts src integrations train
-git commit -m "Fix clean SFT prompt generation and eval workflow"
+git commit -m "Add unified SafeAnywhere SFT data build pipeline"
 git push origin main
 ```
