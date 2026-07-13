@@ -208,10 +208,10 @@ def count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return dict(Counter(str(row.get(key)) for row in rows))
 
 
-def build_report(train: list[dict[str, Any]], val: list[dict[str, Any]], files: dict[str, str]) -> dict[str, Any]:
+def build_report(train: list[dict[str, Any]], val: list[dict[str, Any]], files: dict[str, str | list[str]]) -> dict[str, Any]:
     all_rows = train + val
     return {
-        "dataset_name": "mixed_safechain1k_prefix500",
+        "dataset_name": Path(str(files["report"])).parent.name,
         "counts": {
             "train_total": len(train),
             "val_total": len(val),
@@ -223,6 +223,28 @@ def build_report(train: list[dict[str, Any]], val: list[dict[str, Any]], files: 
         },
         "by_attack_type": count_by(all_rows, "attack_type"),
         "by_label": count_by(all_rows, "label"),
+        "by_source": count_by(all_rows, "source"),
+        "dangerous_prefix_by_source": dict(
+            Counter(
+                str(row.get("source"))
+                for row in all_rows
+                if row["attack_type"] == "dangerous_prefix"
+            )
+        ),
+        "dangerous_prefix_by_type": dict(
+            Counter(
+                str(row.get("prefix_type"))
+                for row in all_rows
+                if row["attack_type"] == "dangerous_prefix"
+            )
+        ),
+        "dangerous_prefix_by_depth": dict(
+            Counter(
+                str(row.get("prefix_depth"))
+                for row in all_rows
+                if row["attack_type"] == "dangerous_prefix"
+            )
+        ),
         "dangerous_prefix_masks": dict(
             Counter(
                 "/".join(str(message["loss_mask"]) for message in row["messages"])
@@ -253,17 +275,40 @@ def assert_expected_counts(report: dict[str, Any], strict: bool) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Merge SafeChain 1k and HEx-PHI prefix 500 into one SFT pilot dataset.")
+    parser = argparse.ArgumentParser(description="Merge SafeChain cold-start data and one or more dangerous-prefix SFT datasets.")
     parser.add_argument("--safechain-train", type=Path, default=DEFAULT_SAFECHAIN_TRAIN)
     parser.add_argument("--safechain-val", type=Path, default=DEFAULT_SAFECHAIN_VAL)
-    parser.add_argument("--prefix-train", type=Path, default=DEFAULT_PREFIX_TRAIN)
-    parser.add_argument("--prefix-val", type=Path, default=DEFAULT_PREFIX_VAL)
+    parser.add_argument(
+        "--prefix-train",
+        type=Path,
+        action="append",
+        default=None,
+        help="Prefix train JSONL. Repeat for multiple prefix sources.",
+    )
+    parser.add_argument(
+        "--prefix-val",
+        type=Path,
+        action="append",
+        default=None,
+        help="Prefix val JSONL. Repeat for multiple prefix sources.",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--no-strict-counts", action="store_true", help="Skip the expected 1350/150 count assertion.")
     args = parser.parse_args()
 
-    train = load_rows(args.safechain_train, "train", "safechain") + load_rows(args.prefix_train, "train", "prefix")
-    val = load_rows(args.safechain_val, "val", "safechain") + load_rows(args.prefix_val, "val", "prefix")
+    prefix_train_paths = args.prefix_train or [DEFAULT_PREFIX_TRAIN]
+    prefix_val_paths = args.prefix_val or [DEFAULT_PREFIX_VAL]
+    if len(prefix_train_paths) != len(prefix_val_paths):
+        raise ValueError(
+            f"--prefix-train and --prefix-val must be passed the same number of times, got {len(prefix_train_paths)} and {len(prefix_val_paths)}"
+        )
+
+    train = load_rows(args.safechain_train, "train", "safechain")
+    val = load_rows(args.safechain_val, "val", "safechain")
+    for path in prefix_train_paths:
+        train.extend(load_rows(path, "train", "prefix"))
+    for path in prefix_val_paths:
+        val.extend(load_rows(path, "val", "prefix"))
     require_unique_ids(train + val)
 
     output_dir = ensure_dir(args.output_dir)
@@ -279,6 +324,10 @@ def main() -> int:
         {
             "sft_train": str(train_path),
             "sft_val": str(val_path),
+            "safechain_train": str(args.safechain_train),
+            "safechain_val": str(args.safechain_val),
+            "prefix_train": [str(path) for path in prefix_train_paths],
+            "prefix_val": [str(path) for path in prefix_val_paths],
             "report": str(report_path),
         },
     )

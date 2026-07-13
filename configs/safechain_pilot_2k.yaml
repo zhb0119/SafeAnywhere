@@ -1,0 +1,46 @@
+dataset_name: safechain_pilot_2k
+seed: 20260702
+
+paths:
+  safechain_jsonl: data/UWNSL__SafeChain__train.jsonl
+  output_dir: build/safechain_pilot_2k
+
+sampling:
+  per_label:
+    vanilla_benign: 500
+    adversarial_benign: 500
+    vanilla_harmful: 500
+    adversarial_harmful: 500
+  safety_think_probability:
+    vanilla_benign: 0.20
+    adversarial_benign: 0.50
+    vanilla_harmful: 1.00
+    adversarial_harmful: 1.00
+  val_ratio: 0.10
+  max_replacements: 200
+
+teacher:
+  provider: deepseek
+  api_key_env: DEEPSEEK_API_KEY
+  base_url_env: DEEPSEEK_BASE_URL
+  model_env: DEEPSEEK_MODEL
+  default_base_url: https://api.deepseek.com
+  default_model: deepseek-v4-pro
+  timeout_env: DEEPSEEK_TIMEOUT
+  default_timeout: 120
+  temperature: 0.2
+  max_tokens: 2000
+  max_retries: 3
+  response_format: json_object
+  thinking: disabled
+
+safety_block:
+  open_token: "<safety_think>"
+  close_token: "</safety_think>"
+  max_tokens: 64
+  required_fields:
+    - risk
+    - trigger
+    - intent
+    - decision
+    - plan

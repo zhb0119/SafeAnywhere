@@ -14,6 +14,7 @@ BASELINE_ADAPTER="${BASELINE_ADAPTER:-}"
 BASELINE_NAME="${BASELINE_NAME:-baseline_sft}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-384}"
 DTYPE="${DTYPE:-bf16}"
+MAX_PER_TASK="${MAX_PER_TASK:-}"
 
 if [[ ! -d "$BASE_MODEL" ]]; then
   echo "Missing base model: $BASE_MODEL" >&2
@@ -31,9 +32,14 @@ fi
 mkdir -p "$EVAL_DIR"
 
 echo "[1/8] Build eval set"
+build_args=()
+if [[ -n "$MAX_PER_TASK" ]]; then
+  build_args=(--max-per-task "$MAX_PER_TASK")
+fi
 "$PYTHON_BIN" scripts/06_build_eval_sets.py \
   --input "$EVAL_INPUT" \
   --output-dir "$EVAL_DIR" \
+  "${build_args[@]}" \
   > "$EVAL_DIR/build_eval_set.log" 2>&1
 
 generate_and_score() {

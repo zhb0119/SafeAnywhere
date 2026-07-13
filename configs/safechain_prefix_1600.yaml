@@ -1,0 +1,55 @@
+dataset_name: safechain_prefix_1600
+seed: 20260706
+
+paths:
+  safechain_jsonl: data/UWNSL__SafeChain__train.jsonl
+  output_dir: build/safechain_prefix_1600
+
+sampling:
+  total: 1600
+  depth_counts:
+    8: 200
+    16: 250
+    32: 350
+    64: 350
+    128: 250
+    200: 200
+  prefix_type_counts:
+    affirmative_prefix: 260
+    outline_prefix: 260
+    materials_prefix: 220
+    source_link_prefix: 180
+    roleplay_acceptance_prefix: 260
+    code_prefix: 210
+    evasion_prefix: 210
+  val_ratio: 0.10
+  max_replacements: 200
+
+teacher:
+  provider: deepseek
+  api_key_env: DEEPSEEK_API_KEY
+  base_url_env: DEEPSEEK_BASE_URL
+  model_env: DEEPSEEK_MODEL
+  default_base_url: https://api.deepseek.com
+  default_model: deepseek-v4-pro
+  timeout_env: DEEPSEEK_TIMEOUT
+  default_timeout: 120
+  temperature: 0.2
+  max_tokens: 1600
+  max_retries: 3
+  response_format: json_object
+  thinking: disabled
+
+safety_block:
+  open_token: "<safety_think>"
+  close_token: "</safety_think>"
+  max_tokens: 64
+  required_fields:
+    - risk
+    - trigger
+    - intent
+    - decision
+    - plan
+
+validation:
+  require_recover_decision: true

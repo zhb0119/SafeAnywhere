@@ -27,18 +27,19 @@ from safeanywhere.io_utils import (  # noqa: E402
     write_jsonl,
 )
 from safeanywhere.prefix_recovery import (  # noqa: E402
-    INFERRED_PREFIX_TYPE,
     count_by,
     make_sft_rows,
     plan_key,
     run_recovery_item,
-    sample_legacy_inferred_recovery_plan,
     sample_recovery_plan,
     split_train_val,
 )
+from safeanywhere.sampling import normalize_instruction, stable_hash  # noqa: E402
 from safeanywhere.teacher import teacher_settings  # noqa: E402
 
 load_dotenv(ROOT / ".env")
+
+HARMFUL_LABELS = {"vanilla_harmful", "adversarial_harmful"}
 
 
 def row_without_order(row: dict[str, Any]) -> dict[str, Any]:
@@ -55,40 +56,35 @@ def load_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
     return list(read_jsonl(path))
 
 
-def read_hex_phi(path: str | Path) -> list[dict[str, str]]:
+def read_safechain_harmful(path: str | Path) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
-    with Path(path).open("r", encoding="utf-8") as f:
-        for line_no, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            obj = json.loads(line)
-            if not isinstance(obj, list) or len(obj) < 2:
-                raise ValueError(f"Expected list conversation at {path}:{line_no}")
-            user_msg = next((m for m in obj if isinstance(m, dict) and m.get("role") == "user"), None)
-            assistant_msg = next((m for m in obj if isinstance(m, dict) and m.get("role") == "assistant"), None)
-            if not user_msg or not assistant_msg:
-                continue
-            instruction = str(user_msg.get("content", "")).strip()
-            unsafe_response = str(assistant_msg.get("content", "")).strip()
-            if instruction and unsafe_response:
-                records.append(
-                    {
-                        "source_id": f"hex_phi_{line_no:06d}",
-                        "instruction": instruction,
-                        "unsafe_response": unsafe_response,
-                    }
-                )
+    seen: set[str] = set()
+    for line_no, row in enumerate(read_jsonl(path), start=1):
+        label = row.get("label")
+        instruction = row.get("instruction")
+        if label not in HARMFUL_LABELS or not isinstance(instruction, str) or not instruction.strip():
+            continue
+        norm = normalize_instruction(instruction)
+        key = f"{label}:{stable_hash(norm)}"
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(
+            {
+                "source_id": f"safechain_{line_no:06d}",
+                "instruction": instruction,
+                "unsafe_response": "",
+                "label": str(label),
+            }
+        )
     return records
 
 
 def sample_plan(config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[tuple[int, str], deque[dict[str, Any]]], dict[str, Any]]:
-    records = read_hex_phi(config["paths"]["hex_phi_jsonl"])
-    if config["sampling"].get("prefix_type_counts"):
-        items, reserve, report = sample_recovery_plan(config, records, source="harmful_hex_phi")
-    else:
-        items, reserve, report = sample_legacy_inferred_recovery_plan(config, records, source="harmful_hex_phi")
-    report["source_path"] = config["paths"]["hex_phi_jsonl"]
+    records = read_safechain_harmful(config["paths"]["safechain_jsonl"])
+    items, reserve, report = sample_recovery_plan(config, records, source="safechain_harmful_prefix")
+    report["source_path"] = config["paths"]["safechain_jsonl"]
+    report["available_by_label"] = dict(Counter(record["label"] for record in records))
     return items, {key: deque(rows) for key, rows in reserve.items()}, report
 
 
@@ -103,8 +99,6 @@ def next_replacement_for_plan(
     used_ids: set[str],
 ) -> dict[str, Any] | None:
     reserve = reserve_by_plan.get(plan_key(depth, prefix_type), deque())
-    if not reserve:
-        reserve = reserve_by_plan.get(plan_key(depth, INFERRED_PREFIX_TYPE), deque())
     while reserve:
         row = reserve.popleft()
         if str(row["id"]) not in used_ids:
@@ -113,7 +107,7 @@ def next_replacement_for_plan(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build SafeAnywhere dangerous-prefix recovery data from Harmful-HEx-PHI.")
+    parser = argparse.ArgumentParser(description="Build SafeAnywhere dangerous-prefix recovery data from SafeChain harmful prompts.")
     parser.add_argument("--config", required=True, help="Path to YAML/JSON config.")
     parser.add_argument("--mock", action="store_true", help="Use deterministic mock teacher.")
     parser.add_argument("--quiet", action="store_true", help="Disable tqdm progress bar.")
@@ -155,7 +149,7 @@ def main() -> int:
             raise RuntimeError(f"--resume requested, but manifest does not exist: {manifest_path}")
         all_items = [dict(row, _order=order) for order, row in enumerate(read_jsonl(manifest_path))]
         for index, expected in enumerate(initial_manifest):
-            for key in ("id", "source_id", "prefix_depth", "instruction", "assistant_prefill"):
+            for key in ("id", "source_id", "prefix_depth", "prefix_type", "instruction", "assistant_prefill"):
                 if all_items[index].get(key) != expected.get(key):
                     raise ValueError(f"Existing manifest does not match config at row {index + 1} field {key}")
         used_triples = {
@@ -189,7 +183,7 @@ def main() -> int:
     accepted_ids = {str(row["id"]) for row in accepted}
     used_manifest_ids = {str(row["id"]) for row in all_items}
 
-    pbar = tqdm(total=target_total, initial=len(accepted), disable=args.quiet, desc="DangerPrefix", unit="ok")
+    pbar = tqdm(total=target_total, initial=len(accepted), disable=args.quiet, desc="SafeChainPrefix", unit="ok")
     pbar.set_postfix(progress_postfix(len(accepted), len(failed), replacements_used))
 
     def can_schedule() -> bool:
@@ -258,7 +252,7 @@ def main() -> int:
                                 with JsonlAppender(manifest_path) as manifest_out:
                                     manifest_out.write(row_without_order(replacement))
                         if not args.quiet:
-                            pbar.write(f"failed {item['id']} depth={item['prefix_depth']}: {error}")
+                            pbar.write(f"failed {item['id']} depth={item['prefix_depth']} type={item['prefix_type']}: {error}")
                     pbar.set_postfix(progress_postfix(len(accepted), len(failed), replacements_used))
 
                 while len(inflight) < args.workers and schedule_one(executor, inflight):
@@ -309,6 +303,7 @@ def main() -> int:
         "failed_by_depth": count_by(failed_sorted, "prefix_depth"),
         "accepted_by_prefix_type": count_by(accepted_sorted, "prefix_type"),
         "failed_by_prefix_type": count_by(failed_sorted, "prefix_type"),
+        "accepted_by_label": count_by(accepted_sorted, "label"),
         "safety_think_position_in_target": dict(Counter(block_position(row["response"]) for row in accepted_sorted)),
         "safety_think_position_in_full_trajectory": {"after_assistant_prefill": len(accepted_sorted)},
         "decision_counts": dict(decision_counts),

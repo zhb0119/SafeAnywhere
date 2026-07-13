@@ -1,0 +1,55 @@
+dataset_name: hex_phi_prefix_1200
+seed: 20260706
+
+paths:
+  hex_phi_jsonl: data/Harmful-HEx-PHI.jsonl
+  output_dir: build/hex_phi_prefix_1200
+
+sampling:
+  total: 1200
+  depth_counts:
+    8: 160
+    16: 200
+    32: 240
+    64: 240
+    128: 200
+    200: 160
+  prefix_type_counts:
+    affirmative_prefix: 240
+    outline_prefix: 200
+    materials_prefix: 160
+    source_link_prefix: 160
+    roleplay_acceptance_prefix: 160
+    code_prefix: 140
+    evasion_prefix: 140
+  val_ratio: 0.10
+  max_replacements: 200
+
+teacher:
+  provider: deepseek
+  api_key_env: DEEPSEEK_API_KEY
+  base_url_env: DEEPSEEK_BASE_URL
+  model_env: DEEPSEEK_MODEL
+  default_base_url: https://api.deepseek.com
+  default_model: deepseek-v4-pro
+  timeout_env: DEEPSEEK_TIMEOUT
+  default_timeout: 120
+  temperature: 0.2
+  max_tokens: 1600
+  max_retries: 3
+  response_format: json_object
+  thinking: disabled
+
+safety_block:
+  open_token: "<safety_think>"
+  close_token: "</safety_think>"
+  max_tokens: 64
+  required_fields:
+    - risk
+    - trigger
+    - intent
+    - decision
+    - plan
+
+validation:
+  require_recover_decision: true

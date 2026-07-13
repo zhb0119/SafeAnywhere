@@ -1,10 +1,11 @@
 # SafeAnywhere
 
-SafeAnywhere 当前复现第一轮 safety-think SFT pilot：
+SafeAnywhere 当前默认构建 prefix2800 版 safety-think SFT 数据：
 
 - SafeChain cold-start safety-think：1000 条
-- HEx-PHI masked dangerous-prefix recovery：500 条
-- mixed 1500 SFT：1350 train / 150 val
+- HEx-PHI masked dangerous-prefix recovery：1200 条
+- SafeChain harmful/adversarial harmful masked prefix recovery：1600 条
+- mixed 3800 SFT：3420 train / 380 val
 - LLaMA-Factory v1 span-level mask 训练
 
 SFT 数据里的 `prompt` 固定为原始 user request。Teacher prompt 只用于生成 teacher target，不会写入 SFT/eval prompt。Dangerous-prefix 样本通过 `messages` 和 LLaMA-Factory content span 实现：`assistant_prefill` 为 `loss_mask=0`，只有 `<safety_think>...</safety_think>` recovery target 参与 loss。
@@ -48,48 +49,82 @@ data/UWNSL__SafeChain__train.jsonl
 data/Harmful-HEx-PHI.jsonl
 ```
 
-## 3. 生成 SFT 数据
+## 3. 生成主 SFT 数据集
 
-SafeChain smoke：
+默认只跑这一条命令：
 
 ```bash
-uv run python scripts/01_build_dataset.py \
-  --config configs/safechain_smoke_10.yaml \
-  --mock
+bash scripts/15_build_prefix2800_dataset.sh
 ```
 
-SafeChain 1k：
+它会按顺序完成：
 
-```bash
-uv run python scripts/01_build_dataset.py \
-  --config configs/safechain_pilot_1k.yaml \
-  --workers 1
+```text
+SafeChain cold-start 1000
+HEx-PHI dangerous-prefix 1200
+SafeChain harmful-prefix 1600
+merge -> mixed_safechain1k_prefix2800
+export -> LLaMA-Factory span-mask JSONL
+validate -> structure-only mask check
 ```
 
-HEx-PHI dangerous-prefix 500：
+关键约束不变：所有 dangerous-prefix 样本都是 `user=0 / assistant_prefill=0 / recovery_target=1`，也就是 prefix 只作为 masked context，不参与 loss。
+
+Prefix type 扩展不是单独命令，已经写入 `configs/hex_phi_prefix_1200.yaml` 和 `configs/safechain_prefix_1600.yaml`。SafeChain 1600 默认覆盖 `affirmative_prefix`、`outline_prefix`、`materials_prefix`、`source_link_prefix`、`roleplay_acceptance_prefix`、`code_prefix`、`evasion_prefix`。
+
+常用参数：
 
 ```bash
-uv run python scripts/02_build_dangerous_prefix.py \
-  --config configs/hex_phi_prefix_500.yaml \
-  --workers 1
+# 中断后续跑
+RESUME=1 bash scripts/15_build_prefix2800_dataset.sh
+
+# 并发 teacher 请求
+WORKERS=2 bash scripts/15_build_prefix2800_dataset.sh
+
+# 不调用 teacher，只验证流程和 mask
+MOCK=1 bash scripts/15_build_prefix2800_dataset.sh
+
+# 打印完整阶段输出；默认完整日志写入 build/mixed_safechain1k_prefix2800/build_prefix2800.log
+VERBOSE=1 bash scripts/15_build_prefix2800_dataset.sh
 ```
 
-中断后加 `--resume` 继续。
+主产物：
 
-## 4. 合并与导出
+```text
+build/mixed_safechain1k_prefix2800/sft_train.jsonl
+build/mixed_safechain1k_prefix2800/sft_val.jsonl
+build/mixed_safechain1k_prefix2800/train_lf_v1_spanmasked.jsonl
+build/mixed_safechain1k_prefix2800/val_lf_v1_spanmasked.jsonl
+train/llamafactory/dataset_safeanywhere_prefix2800_train.yaml
+train/llamafactory/dataset_safeanywhere_prefix2800_val.yaml
+```
+
+报告：
+
+```text
+build/safechain_pilot_1k/report.json
+build/hex_phi_prefix_1200/report.json
+build/safechain_prefix_1600/report.json
+build/mixed_safechain1k_prefix2800/report.json
+build/mixed_safechain1k_prefix2800/llamafactory_v1_export_report.json
+build/mixed_safechain1k_prefix2800/build_prefix2800.log
+```
+
+## 4. Legacy 1500 Pilot
+
+只在复现早期 1500 条 pilot 时使用：
 
 ```bash
+uv run python scripts/01_build_dataset.py --config configs/safechain_pilot_1k.yaml --workers 1
+uv run python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1
 uv run python scripts/03_merge_sft_pilot.py
 uv run python scripts/04_export_llamafactory_v1.py
 ```
 
-产物：
+对应产物仍是：
 
 ```text
-build/mixed_safechain1k_prefix500/sft_train.jsonl
-build/mixed_safechain1k_prefix500/sft_val.jsonl
-build/mixed_safechain1k_prefix500/train_lf_v1_spanmasked.jsonl
-build/mixed_safechain1k_prefix500/val_lf_v1_spanmasked.jsonl
+build/mixed_safechain1k_prefix500/
 train/llamafactory/dataset_safeanywhere_1500_train.yaml
 train/llamafactory/dataset_safeanywhere_1500_val.yaml
 ```
@@ -104,10 +139,12 @@ from pathlib import Path
 paths = [
     Path("build/safechain_pilot_1k/sft_train.jsonl"),
     Path("build/safechain_pilot_1k/sft_val.jsonl"),
-    Path("build/hex_phi_prefix_500/sft_train.jsonl"),
-    Path("build/hex_phi_prefix_500/sft_val.jsonl"),
-    Path("build/mixed_safechain1k_prefix500/sft_train.jsonl"),
-    Path("build/mixed_safechain1k_prefix500/sft_val.jsonl"),
+    Path("build/hex_phi_prefix_1200/sft_train.jsonl"),
+    Path("build/hex_phi_prefix_1200/sft_val.jsonl"),
+    Path("build/safechain_prefix_1600/sft_train.jsonl"),
+    Path("build/safechain_prefix_1600/sft_val.jsonl"),
+    Path("build/mixed_safechain1k_prefix2800/sft_train.jsonl"),
+    Path("build/mixed_safechain1k_prefix2800/sft_val.jsonl"),
 ]
 needles = ["You are SafeAnywhere", "Rules for <safety_think>", "User request:", "Assistant prefill:"]
 bad = []
@@ -160,10 +197,15 @@ cp integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py \
 
 ```bash
 cd /root/workspace/SafeAnywhere
-uv run python scripts/05_validate_llamafactory_masks.py --structure-only
+uv run python scripts/05_validate_llamafactory_masks.py \
+  --structure-only \
+  --train build/mixed_safechain1k_prefix2800/train_lf_v1_spanmasked.jsonl \
+  --val build/mixed_safechain1k_prefix2800/val_lf_v1_spanmasked.jsonl
 
 USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
   python scripts/05_validate_llamafactory_masks.py \
+  --train build/mixed_safechain1k_prefix2800/train_lf_v1_spanmasked.jsonl \
+  --val build/mixed_safechain1k_prefix2800/val_lf_v1_spanmasked.jsonl \
   --renderer llamafactory \
   --llamafactory-root /root/workspace/LLaMA-Factory \
   --max-render-checks 2000
@@ -172,10 +214,10 @@ USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
 预期：
 
 ```text
-train.rows = 1350
-train.dangerous_prefix = 450
-val.rows = 150
-val.dangerous_prefix = 50
+train.rows = 3420
+train.dangerous_prefix = 2520
+val.rows = 380
+val.dangerous_prefix = 280
 ```
 
 ## 7. SFT
@@ -189,8 +231,7 @@ val.dangerous_prefix = 50
 如需替换模型，修改：
 
 ```text
-train/llamafactory/qwen3_lora_sft_debug.yaml
-train/llamafactory/qwen3_lora_sft_1500_v1.yaml
+train/llamafactory/qwen3_lora_sft_prefix2800_v1.yaml
 ```
 
 Debug：
@@ -206,14 +247,13 @@ USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
 ```bash
 cd /root/workspace/SafeAnywhere
 USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
-  llamafactory-cli sft train/llamafactory/qwen3_lora_sft_1500_v1.yaml
+  llamafactory-cli sft train/llamafactory/qwen3_lora_sft_prefix2800_v1.yaml
 ```
 
 输出：
 
 ```text
-runs/qwen3_safeanywhere_lora_debug/
-runs/qwen3_safeanywhere_lora_1500_v1/
+runs/qwen3_safeanywhere_lora_prefix2800_v1/
 ```
 
 ## 8. 自定义评测
@@ -298,6 +338,7 @@ python -m py_compile \
   src/safeanywhere/*.py \
   scripts/01_build_dataset.py \
   scripts/02_build_dangerous_prefix.py \
+  scripts/02b_build_safechain_prefix.py \
   scripts/03_merge_sft_pilot.py \
   scripts/04_export_llamafactory_v1.py \
   scripts/05_validate_llamafactory_masks.py \
@@ -310,6 +351,7 @@ python -m py_compile \
   scripts/12_write_external_benchmark_commands.py \
   scripts/14_write_eval_readme.py
 bash -n scripts/13_run_eval_comparison.sh
+bash -n scripts/15_build_prefix2800_dataset.sh
 ```
 
 ## 11. Push
