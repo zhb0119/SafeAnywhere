@@ -516,7 +516,7 @@ wc -l build/hex_phi_prefix_500/annotations.jsonl build/hex_phi_prefix_500/failed
 ps -fp $(cat build/hex_phi_prefix_500/run.pid 2>/dev/null) 2>/dev/null || true
 
 # dangerous-prefix 500 resume
-.venv/bin/python scripts/02_build_dangerous_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1 --resume
+.venv/bin/python scripts/data/build_hex_phi_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1 --resume
 
 # 完成后看报告
 cat build/hex_phi_prefix_500/report.json

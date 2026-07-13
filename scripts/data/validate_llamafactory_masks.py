@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 DEFAULT_TRAIN = ROOT / "build/mixed_safechain1k_prefix500/train_lf_v1_spanmasked.jsonl"

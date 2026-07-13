@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "build/eval/safeanywhere_v1/predictions.jsonl"
 DEFAULT_SCORED = ROOT / "build/eval/safeanywhere_v1/predictions_scored.jsonl"
 DEFAULT_SUMMARY = ROOT / "build/eval/safeanywhere_v1/score_summary.json"

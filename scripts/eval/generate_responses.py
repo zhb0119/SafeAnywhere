@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EVAL = ROOT / "build/eval/safeanywhere_v1/safeanywhere_eval.jsonl"
 DEFAULT_OUTPUT = ROOT / "build/eval/safeanywhere_v1/predictions.jsonl"
 

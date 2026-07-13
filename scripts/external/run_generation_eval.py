@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = ROOT / "build/eval/external"
 
 BENCHMARK_FILES = {
@@ -56,11 +56,11 @@ def main() -> int:
     for benchmark in args.benchmarks:
         eval_file = args.output_dir / BENCHMARK_FILES[benchmark]
         if not eval_file.exists():
-            raise FileNotFoundError(f"Eval file not found. Run scripts/10_prepare_external_benchmarks.py first: {eval_file}")
+            raise FileNotFoundError(f"Eval file not found. Run scripts/external/prepare_benchmarks.py first: {eval_file}")
         predictions, scored, summary = bench_paths(args.output_dir, benchmark, run_name)
         gen_cmd = [
             sys.executable,
-            str(ROOT / "scripts/07_generate_eval_responses.py"),
+            str(ROOT / "scripts/eval/generate_responses.py"),
             "--eval-file",
             str(eval_file),
             "--base-model",
@@ -84,7 +84,7 @@ def main() -> int:
             gen_cmd.extend(["--limit", str(args.limit)])
         score_cmd = [
             sys.executable,
-            str(ROOT / "scripts/08_score_eval_results.py"),
+            str(ROOT / "scripts/eval/score_heuristic.py"),
             "--input",
             str(predictions),
             "--scored-output",

@@ -22,7 +22,7 @@ def flatten_metrics(report: dict[str, Any]) -> dict[str, float]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare two SafeAnywhere heuristic eval summaries.")
+    parser = argparse.ArgumentParser(description="Compare two SafeAnywhere eval score summaries.")
     parser.add_argument("--base", required=True, type=Path)
     parser.add_argument("--candidate", required=True, type=Path)
     args = parser.parse_args()

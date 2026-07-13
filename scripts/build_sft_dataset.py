@@ -29,13 +29,13 @@ PROMPT_WRAPPER_NEEDLES = [
 ]
 PREFIX_SOURCE_BUILDERS = {
     "hex_phi": {
-        "script": "scripts/02_build_dangerous_prefix.py",
+        "script": "scripts/data/build_hex_phi_prefix.py",
         "path_key": "hex_phi_jsonl",
         "output_subdir": "hex_phi",
         "source_kind": "harmful_hex_phi",
     },
     "safechain_harmful": {
-        "script": "scripts/02b_build_safechain_prefix.py",
+        "script": "scripts/data/build_safechain_prefix.py",
         "path_key": "safechain_jsonl",
         "output_subdir": "safechain_harmful",
         "source_kind": "safechain_harmful_prefix",
@@ -325,7 +325,7 @@ def run_builder_steps(config: dict[str, Any], args: argparse.Namespace, generate
         "[1/6] Build safechain annotations",
         [
             python_bin,
-            "scripts/01_build_dataset.py",
+            "scripts/data/build_safechain.py",
             "--config",
             repo_relative(safechain_config_path),
             *child_common_args(safechain_dir, args),
@@ -390,7 +390,7 @@ def run_merge_export_validate(
         "[3/6] Merge safechain + harmful_prefix",
         [
             python_bin,
-            "scripts/03_merge_sft_pilot.py",
+            "scripts/data/merge_sft.py",
             "--safechain-train",
             repo_relative(dirs["safechain"] / "sft_train.jsonl"),
             "--safechain-val",
@@ -434,7 +434,7 @@ def run_merge_export_validate(
             "[4/6] Export LLaMA-Factory span-mask JSONL",
             [
                 python_bin,
-                "scripts/04_export_llamafactory_v1.py",
+                "scripts/data/export_llamafactory_v1.py",
                 "--input-dir",
                 repo_relative(output_dir),
                 "--output-dir",
@@ -456,7 +456,7 @@ def run_merge_export_validate(
             "[5/6] Validate LLaMA-Factory span-mask structure",
             [
                 python_bin,
-                "scripts/05_validate_llamafactory_masks.py",
+                "scripts/data/validate_llamafactory_masks.py",
                 "--structure-only",
                 "--train",
                 repo_relative(output_dir / "train_lf_v1_spanmasked.jsonl"),

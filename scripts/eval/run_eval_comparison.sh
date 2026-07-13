@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -15,6 +15,12 @@ BASELINE_NAME="${BASELINE_NAME:-baseline_sft}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-384}"
 DTYPE="${DTYPE:-bf16}"
 MAX_PER_TASK="${MAX_PER_TASK:-}"
+SCORER="${SCORER:-heuristic}"
+JUDGE_MODEL="${JUDGE_MODEL:-}"
+JUDGE_API_KEY_ENV="${JUDGE_API_KEY_ENV:-}"
+JUDGE_BASE_URL_ENV="${JUDGE_BASE_URL_ENV:-}"
+JUDGE_MODEL_ENV="${JUDGE_MODEL_ENV:-}"
+JUDGE_MAX_FIELD_CHARS="${JUDGE_MAX_FIELD_CHARS:-}"
 
 if [[ ! -d "$BASE_MODEL" ]]; then
   echo "Missing base model: $BASE_MODEL" >&2
@@ -36,7 +42,7 @@ build_args=()
 if [[ -n "$MAX_PER_TASK" ]]; then
   build_args=(--max-per-task "$MAX_PER_TASK")
 fi
-"$PYTHON_BIN" scripts/06_build_eval_sets.py \
+"$PYTHON_BIN" scripts/eval/build_eval_sets.py \
   --input "$EVAL_INPUT" \
   --output-dir "$EVAL_DIR" \
   "${build_args[@]}" \
@@ -46,12 +52,28 @@ generate_and_score() {
   local name="$1"
   local adapter="${2:-}"
   local -a adapter_args=()
+  local -a judge_args=()
   if [[ -n "$adapter" ]]; then
     adapter_args=(--adapter "$adapter")
   fi
+  if [[ -n "$JUDGE_MODEL" ]]; then
+    judge_args+=(--model "$JUDGE_MODEL")
+  fi
+  if [[ -n "$JUDGE_API_KEY_ENV" ]]; then
+    judge_args+=(--api-key-env "$JUDGE_API_KEY_ENV")
+  fi
+  if [[ -n "$JUDGE_BASE_URL_ENV" ]]; then
+    judge_args+=(--base-url-env "$JUDGE_BASE_URL_ENV")
+  fi
+  if [[ -n "$JUDGE_MODEL_ENV" ]]; then
+    judge_args+=(--model-env "$JUDGE_MODEL_ENV")
+  fi
+  if [[ -n "$JUDGE_MAX_FIELD_CHARS" ]]; then
+    judge_args+=(--max-field-chars "$JUDGE_MAX_FIELD_CHARS")
+  fi
 
   echo "Generate $name"
-  "$PYTHON_BIN" scripts/07_generate_eval_responses.py \
+  "$PYTHON_BIN" scripts/eval/generate_responses.py \
     --eval-file "$EVAL_DIR/safeanywhere_eval.jsonl" \
     --base-model "$BASE_MODEL" \
     "${adapter_args[@]}" \
@@ -62,11 +84,23 @@ generate_and_score() {
     > "$EVAL_DIR/${name}_generate.log" 2>&1
 
   echo "Score $name"
-  "$PYTHON_BIN" scripts/08_score_eval_results.py \
-    --input "$EVAL_DIR/${name}_predictions.jsonl" \
-    --scored-output "$EVAL_DIR/${name}_predictions_scored.jsonl" \
-    --summary-output "$EVAL_DIR/${name}_score_summary.json" \
-    > "$EVAL_DIR/${name}_score.log" 2>&1
+  if [[ "$SCORER" == "llm" || "$SCORER" == "llm_judge" ]]; then
+    "$PYTHON_BIN" scripts/eval/score_llm_judge.py \
+      --input "$EVAL_DIR/${name}_predictions.jsonl" \
+      --scored-output "$EVAL_DIR/${name}_predictions_scored.jsonl" \
+      --summary-output "$EVAL_DIR/${name}_score_summary.json" \
+      "${judge_args[@]}" \
+      > "$EVAL_DIR/${name}_score.log" 2>&1
+  elif [[ "$SCORER" == "heuristic" ]]; then
+    "$PYTHON_BIN" scripts/eval/score_heuristic.py \
+      --input "$EVAL_DIR/${name}_predictions.jsonl" \
+      --scored-output "$EVAL_DIR/${name}_predictions_scored.jsonl" \
+      --summary-output "$EVAL_DIR/${name}_score_summary.json" \
+      > "$EVAL_DIR/${name}_score.log" 2>&1
+  else
+    echo "Unsupported SCORER=$SCORER. Use heuristic or llm_judge." >&2
+    exit 1
+  fi
 }
 
 echo "[2/8] Base generation and scoring"
@@ -83,14 +117,14 @@ echo "[4/8] Candidate adapter generation and scoring"
 generate_and_score "$CANDIDATE_NAME" "$CANDIDATE_ADAPTER"
 
 echo "[5/8] Compare base vs candidate"
-"$PYTHON_BIN" scripts/09_compare_eval_reports.py \
+"$PYTHON_BIN" scripts/eval/compare_reports.py \
   --base "$EVAL_DIR/base_score_summary.json" \
   --candidate "$EVAL_DIR/${CANDIDATE_NAME}_score_summary.json" \
   > "$EVAL_DIR/compare_base_vs_${CANDIDATE_NAME}.md"
 
 if [[ -n "$BASELINE_ADAPTER" ]]; then
   echo "[6/8] Compare baseline vs candidate"
-  "$PYTHON_BIN" scripts/09_compare_eval_reports.py \
+  "$PYTHON_BIN" scripts/eval/compare_reports.py \
     --base "$EVAL_DIR/${BASELINE_NAME}_score_summary.json" \
     --candidate "$EVAL_DIR/${CANDIDATE_NAME}_score_summary.json" \
     > "$EVAL_DIR/compare_${BASELINE_NAME}_vs_${CANDIDATE_NAME}.md"
@@ -99,7 +133,7 @@ else
 fi
 
 echo "[7/8] Write README"
-"$PYTHON_BIN" scripts/14_write_eval_readme.py \
+"$PYTHON_BIN" scripts/eval/write_eval_readme.py \
   --eval-dir "$EVAL_DIR" \
   --candidate-name "$CANDIDATE_NAME" \
   --candidate-adapter "$CANDIDATE_ADAPTER" \

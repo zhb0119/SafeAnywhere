@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "build/mixed_safechain1k_prefix500/sft_val.jsonl"
 DEFAULT_OUTPUT_DIR = ROOT / "build/eval/safeanywhere_v1"
 

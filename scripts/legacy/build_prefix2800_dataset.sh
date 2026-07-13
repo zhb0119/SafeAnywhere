@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
 WORKERS="${WORKERS:-1}"
 PYTHON_BIN="${PYTHON_BIN:-uv run python}"
 MOCK="${MOCK:-0}"
@@ -50,7 +53,7 @@ fi
 
 if [[ ! -s "$SAFECHAIN_DIR/sft_train.jsonl" || ! -s "$SAFECHAIN_DIR/sft_val.jsonl" ]]; then
   echo "[1/6] Build SafeChain cold-start 1000"
-  run_python scripts/01_build_dataset.py \
+  run_python scripts/data/build_safechain.py \
     --config "$SAFECHAIN_CONFIG" \
     --workers "$WORKERS" \
     "${run_args[@]}"
@@ -59,19 +62,19 @@ else
 fi
 
 echo "[2/6] Build HEx-PHI dangerous-prefix 1200"
-run_python scripts/02_build_dangerous_prefix.py \
+run_python scripts/data/build_hex_phi_prefix.py \
   --config "$HEX_CONFIG" \
   --workers "$WORKERS" \
   "${run_args[@]}"
 
 echo "[3/6] Build SafeChain dangerous-prefix 1600"
-run_python scripts/02b_build_safechain_prefix.py \
+run_python scripts/data/build_safechain_prefix.py \
   --config "$SAFECHAIN_PREFIX_CONFIG" \
   --workers "$WORKERS" \
   "${run_args[@]}"
 
 echo "[4/6] Merge SafeChain cold-start + prefix datasets"
-run_python scripts/03_merge_sft_pilot.py \
+run_python scripts/data/merge_sft.py \
   --safechain-train "$SAFECHAIN_DIR/sft_train.jsonl" \
   --safechain-val "$SAFECHAIN_DIR/sft_val.jsonl" \
   --prefix-train "$HEX_PREFIX_DIR/sft_train.jsonl" \
@@ -82,14 +85,14 @@ run_python scripts/03_merge_sft_pilot.py \
   --no-strict-counts
 
 echo "[5/6] Export LLaMA-Factory span-mask JSONL"
-run_python scripts/04_export_llamafactory_v1.py \
+run_python scripts/data/export_llamafactory_v1.py \
   --input-dir "$OUTPUT_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --train-dataset-yaml "$TRAIN_YAML" \
   --val-dataset-yaml "$VAL_YAML"
 
 echo "[6/6] Validate exported span-mask structure"
-run_python scripts/05_validate_llamafactory_masks.py \
+run_python scripts/data/validate_llamafactory_masks.py \
   --structure-only \
   --train "$OUTPUT_DIR/train_lf_v1_spanmasked.jsonl" \
   --val "$OUTPUT_DIR/val_lf_v1_spanmasked.jsonl"
