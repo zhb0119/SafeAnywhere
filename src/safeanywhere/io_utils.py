@@ -27,7 +27,7 @@ def resolve_cli_path(path: str | Path, project_root: str | Path) -> Path:
     cwd_path = path.resolve()
     if cwd_path.exists():
         return cwd_path
-    return (Path(project_root) / path).resolve()
+    return resolve_existing_project_path(path, project_root)
 
 
 def resolve_project_path(path: str | Path, project_root: str | Path) -> Path:
@@ -35,6 +35,26 @@ def resolve_project_path(path: str | Path, project_root: str | Path) -> Path:
     if path.is_absolute():
         return path
     return (Path(project_root) / path).resolve()
+
+
+def resolve_existing_project_path(path: str | Path, project_root: str | Path) -> Path:
+    resolved = resolve_project_path(path, project_root)
+    if resolved.exists():
+        return resolved
+
+    root = Path(project_root).resolve()
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError:
+        return resolved
+
+    parts = relative.parts
+    if len(parts) >= 2 and parts[0] == "build" and parts[1] == "data_build":
+        legacy = root.joinpath("build", *parts[2:])
+        if legacy.exists():
+            return legacy
+
+    return resolved
 
 
 def resolve_config_paths(config: dict[str, Any], project_root: str | Path) -> dict[str, Any]:

@@ -1,3 +1,0 @@
-safeanywhere_train:
-  path: build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl
-  source: local

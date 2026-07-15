@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_DIR = ROOT / "build/eval/external/commands"
+DEFAULT_OUTPUT_DIR = ROOT / "build/data_build/eval/external/commands"
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -118,9 +118,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Write shell command files for external benchmark runners.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--base-model", default="/root/workspace/models/Qwen3-0.6B")
-    parser.add_argument("--adapter", default="/root/workspace/SafeAnywhere/runs/qwen3_safeanywhere_lora_1500_v1")
-    parser.add_argument("--merged-model", default="/root/workspace/SafeAnywhere/runs/qwen3_safeanywhere_lora_1500_v1_merged")
-    parser.add_argument("--eval-output-dir", default="/root/workspace/SafeAnywhere/build/eval/external")
+    parser.add_argument("--adapter", default="/root/workspace/SafeAnywhere/runs/qwen3_safeanywhere_lora_sft_v1")
+    parser.add_argument("--merged-model", default="/root/workspace/SafeAnywhere/runs/qwen3_safeanywhere_lora_sft_v1_merged")
+    parser.add_argument("--eval-output-dir", default="/root/workspace/SafeAnywhere/build/data_build/eval/external")
     parser.add_argument("--lm-eval-tasks", default="mmlu,ifeval,gsm8k,arc_challenge,hellaswag,truthfulqa_mc2")
     args = parser.parse_args()
 

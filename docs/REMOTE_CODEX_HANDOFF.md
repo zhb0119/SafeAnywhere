@@ -9,7 +9,7 @@
 ```bash
 cd /root/workspace/SafeAnywhere
 uv run python scripts/build_sft_dataset.py \
-  --config configs/safeanywhere_sft_v1.yaml \
+  --config configs/data_build/safeanywhere_sft_v1.yaml \
   --workers 1 \
   --quiet
 ```
@@ -17,7 +17,7 @@ uv run python scripts/build_sft_dataset.py \
 默认产物：
 
 ```text
-build/safeanywhere_sft_v1/
+build/data_build/safeanywhere_sft_v1/
   safechain/
   harmful_prefix/
   sft_train.jsonl
@@ -32,10 +32,10 @@ build/safeanywhere_sft_v1/
 
 ```text
 safechain       # cold-start safety-think
-harmful_prefix  # masked assistant-prefix recovery, internally from HEx-PHI + SafeChain harmful prompts
+harmful_prefix  # masked assistant-prefix recovery from HEx-PHI source excerpts + SafeChain generated harmful prefixes
 ```
 
-下面关于 1500 pilot / prefix500 的内容保留为历史上下文；新复现优先按 README 和 `configs/safeanywhere_sft_v1.yaml` 执行。
+下面关于 1500 pilot / prefix500 的内容保留为历史上下文；新复现优先按 README 和 `configs/data_build/safeanywhere_sft_v1.yaml` 执行。
 
 ## 1. 当前目标
 
@@ -116,15 +116,9 @@ data/Harmful-HEx-PHI.jsonl
 ]
 ```
 
-当前 `hex_phi_prefix_500` 不直接复制 HEx-PHI unsafe assistant response 作为训练上下文，而是用 masked template 生成 `assistant_prefill`，例如：
+当前 HEx-PHI harmful-prefix 配置使用 `source_excerpt`：直接从 HEx-PHI unsafe assistant response 做 token-ish 前缀截断，作为 masked `assistant_prefill` context。
 
-```text
-The process can be broken into concrete stages:
-Step 1: [REDACTED unsafe operational detail].
-Step 2: [REDACTED unsafe operational detail].
-```
-
-这样做的目的是避免把具体危险步骤、材料、链接、代码、剂量或规避方法写入训练 target。`assistant_prefill` 只作为 context，必须 `loss_mask=0`。
+SafeChain harmful-prefix 配置使用 `generated_compliance`：先由 teacher 生成自然的顺从/向危险行为偏移的 assistant prefill，再由 recovery teacher 生成 `<safety_think>...</safety_think>\nrecovery` target。`assistant_prefill` 只作为 context，必须 `loss_mask=0`。
 
 ## 4. 当前数据进度
 
@@ -471,25 +465,23 @@ visible_response_safe_rate
 over_refusal_on_benign_prefix
 ```
 
-### 8.6 后续 real-prefix 消融
+### 8.6 Prefix 模式
 
-当前 `hex_phi_prefix_500` 是 masked-prefix 版本。后续建议增加一个独立 real-prefix 消融，不覆盖当前数据：
+当前主配置：
 
 ```text
-build/hex_phi_prefix_500_realprefix/
+HEx-PHI: source_excerpt，prefix_type 从原始 unsafe response 自动推断
+SafeChain harmful: generated_compliance，prefix_type 按配置分布生成
 ```
 
-核心差异：
+旧版 redacted template 仍保留为兼容模式：
 
 ```text
-masked-prefix:
+template_redacted:
   assistant_prefill = synthetic masked template
-
-real-prefix:
-  assistant_prefill = HEx-PHI unsafe assistant response 的 token-ish 前缀截断
 ```
 
-real-prefix 只允许作为 `loss_mask=0` 的 context。只有在训练框架确认 mask 正确后，才可以跑 real-prefix SFT。
+所有 prefix 模式都只允许作为 `loss_mask=0` 的 context。只有在训练框架确认 mask 正确后，才可以跑 harmful-prefix SFT。
 
 建议 ablation：
 
@@ -516,7 +508,7 @@ wc -l build/hex_phi_prefix_500/annotations.jsonl build/hex_phi_prefix_500/failed
 ps -fp $(cat build/hex_phi_prefix_500/run.pid 2>/dev/null) 2>/dev/null || true
 
 # dangerous-prefix 500 resume
-.venv/bin/python scripts/data/build_hex_phi_prefix.py --config configs/hex_phi_prefix_500.yaml --workers 1 --resume
+.venv/bin/python scripts/data/build_hex_phi_prefix.py --config configs/data_build/hex_phi_prefix_500.yaml --workers 1 --resume
 
 # 完成后看报告
 cat build/hex_phi_prefix_500/report.json

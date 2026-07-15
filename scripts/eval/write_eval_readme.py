@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+sys.path.insert(0, str(SRC))
+
+from safeanywhere.io_utils import resolve_existing_project_path  # noqa: E402
 
 
 METRIC_ROWS = [
@@ -25,6 +33,33 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def first_existing(paths: list[Path]) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+def eval_file_path(eval_dir: Path) -> Path:
+    return first_existing([eval_dir / "eval_set/safeanywhere_eval.jsonl", eval_dir / "safeanywhere_eval.jsonl"])
+
+
+def eval_report_path(eval_dir: Path) -> Path:
+    return first_existing([eval_dir / "eval_set/report.json", eval_dir / "report.json"])
+
+
+def summary_path(eval_dir: Path, name: str) -> Path:
+    return first_existing([eval_dir / f"runs/{name}/score_summary.json", eval_dir / f"{name}_score_summary.json"])
+
+
+def scored_path(eval_dir: Path, name: str) -> Path:
+    return first_existing([eval_dir / f"runs/{name}/predictions_scored.jsonl", eval_dir / f"{name}_predictions_scored.jsonl"])
+
+
+def comparison_path(eval_dir: Path, left: str, right: str, legacy_name: str) -> Path:
+    return first_existing([eval_dir / f"comparisons/{left}_vs_{right}.md", eval_dir / legacy_name])
 
 
 def metric(summary: dict[str, Any], task: str, key: str) -> float | None:
@@ -64,9 +99,6 @@ def task_examples(rows: list[dict[str, Any]], task: str, limit: int = 2) -> list
 
 def row_score(row: dict[str, Any]) -> dict[str, Any]:
     score = row.get("llm_judge_score")
-    if isinstance(score, dict):
-        return score
-    score = row.get("heuristic_score")
     return score if isinstance(score, dict) else {}
 
 
@@ -74,7 +106,7 @@ def scorer_name(summary: dict[str, Any]) -> str:
     scorer = summary.get("scorer")
     if isinstance(scorer, str) and scorer:
         return scorer
-    return "heuristic"
+    return "llm_judge"
 
 
 def table_row(
@@ -105,14 +137,17 @@ def table_row(
 
 def write_report(args: argparse.Namespace) -> Path:
     eval_dir = args.eval_dir
-    report = read_json(eval_dir / "report.json")
-    eval_rows = read_jsonl(eval_dir / "safeanywhere_eval.jsonl")
-    base = read_json(eval_dir / "base_score_summary.json")
-    candidate = read_json(eval_dir / f"{args.candidate_name}_score_summary.json")
-    candidate_rows = read_jsonl(eval_dir / f"{args.candidate_name}_predictions_scored.jsonl")
+    report_path = eval_report_path(eval_dir)
+    eval_file = eval_file_path(eval_dir)
+    candidate_scored = scored_path(eval_dir, args.candidate_name)
+    report = read_json(report_path)
+    eval_rows = read_jsonl(eval_file)
+    base = read_json(summary_path(eval_dir, "base"))
+    candidate = read_json(summary_path(eval_dir, args.candidate_name))
+    candidate_rows = read_jsonl(candidate_scored)
     baseline = None
     if args.baseline_adapter:
-        baseline = read_json(eval_dir / f"{args.baseline_name}_score_summary.json")
+        baseline = read_json(summary_path(eval_dir, args.baseline_name))
     scorer = scorer_name(candidate)
     judge_model = candidate.get("judge_model")
 
@@ -126,13 +161,16 @@ def write_report(args: argparse.Namespace) -> Path:
     lines = [
         "# SafeAnywhere Eval Report",
         "",
-        "Generation uses only prompts from `safeanywhere_eval.jsonl`; no eval-time system prompt is passed.",
+        "Generation and scoring settings are controlled by the eval config plus any environment-variable overrides.",
         "",
         "## Inputs",
         "",
         "| item | value |",
         "|---|---|",
-        f"| eval file | `{eval_dir / 'safeanywhere_eval.jsonl'}` |",
+        f"| eval config | `{args.config}` |",
+        f"| eval file | `{eval_file}` |",
+        f"| eval report | `{report_path}` |",
+        f"| candidate scored file | `{candidate_scored}` |",
         f"| base model | `{args.base_model}` |",
         f"| candidate adapter | `{args.candidate_adapter}` |",
         f"| scorer | `{scorer}` |",
@@ -218,11 +256,16 @@ def write_report(args: argparse.Namespace) -> Path:
             )
         lines.append("")
 
-    compare_path = eval_dir / f"compare_base_vs_{args.candidate_name}.md"
+    compare_path = comparison_path(eval_dir, "base", args.candidate_name, f"compare_base_vs_{args.candidate_name}.md")
     if compare_path.exists():
         lines.extend(["## Base Vs Candidate", "", compare_path.read_text(encoding="utf-8").strip(), ""])
     if baseline is not None:
-        compare_path = eval_dir / f"compare_{args.baseline_name}_vs_{args.candidate_name}.md"
+        compare_path = comparison_path(
+            eval_dir,
+            args.baseline_name,
+            args.candidate_name,
+            f"compare_{args.baseline_name}_vs_{args.candidate_name}.md",
+        )
         if compare_path.exists():
             lines.extend(["## Baseline Vs Candidate", "", compare_path.read_text(encoding="utf-8").strip(), ""])
 
@@ -233,13 +276,15 @@ def write_report(args: argparse.Namespace) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Write README for a SafeAnywhere eval comparison.")
-    parser.add_argument("--eval-dir", type=Path, default=Path("build/eval/safeanywhere_v1"))
+    parser.add_argument("--eval-dir", type=Path, default=Path("build/data_build/eval/safeanywhere_v1_1532"))
     parser.add_argument("--candidate-name", default="sft")
-    parser.add_argument("--candidate-adapter", default="runs/qwen3_safeanywhere_lora_1500_v1")
+    parser.add_argument("--candidate-adapter", default="runs/qwen3_safeanywhere_lora_sft_v1")
     parser.add_argument("--baseline-name", default="baseline_sft")
     parser.add_argument("--baseline-adapter", default="")
     parser.add_argument("--base-model", default="../models/Qwen3-0.6B")
+    parser.add_argument("--config", default="configs/eval/safeanywhere_v1.yaml")
     args = parser.parse_args()
+    args.eval_dir = resolve_existing_project_path(args.eval_dir, ROOT)
     print(write_report(args))
     return 0
 

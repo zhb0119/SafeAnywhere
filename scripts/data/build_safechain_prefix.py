@@ -42,6 +42,14 @@ load_dotenv(ROOT / ".env")
 HARMFUL_LABELS = {"vanilla_harmful", "adversarial_harmful"}
 
 
+def repo_relative(path: str | Path) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def row_without_order(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k != "_order"}
 
@@ -83,9 +91,16 @@ def read_safechain_harmful(path: str | Path) -> list[dict[str, str]]:
 def sample_plan(config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[tuple[int, str], deque[dict[str, Any]]], dict[str, Any]]:
     records = read_safechain_harmful(config["paths"]["safechain_jsonl"])
     items, reserve, report = sample_recovery_plan(config, records, source="safechain_harmful_prefix")
-    report["source_path"] = config["paths"]["safechain_jsonl"]
+    report["source_path"] = repo_relative(config["paths"]["safechain_jsonl"])
     report["available_by_label"] = dict(Counter(record["label"] for record in records))
     return items, {key: deque(rows) for key, rows in reserve.items()}, report
+
+
+def manifest_compare_keys(expected: dict[str, Any]) -> tuple[str, ...]:
+    keys = ["id", "source_id", "prefix_depth", "prefix_type", "prefix_mode", "instruction"]
+    if not expected.get("prefix_generation_required"):
+        keys.append("assistant_prefill")
+    return tuple(keys)
 
 
 def progress_postfix(accepted: int, failed: int, replacements: int) -> dict[str, str]:
@@ -149,7 +164,7 @@ def main() -> int:
             raise RuntimeError(f"--resume requested, but manifest does not exist: {manifest_path}")
         all_items = [dict(row, _order=order) for order, row in enumerate(read_jsonl(manifest_path))]
         for index, expected in enumerate(initial_manifest):
-            for key in ("id", "source_id", "prefix_depth", "prefix_type", "instruction", "assistant_prefill"):
+            for key in manifest_compare_keys(expected):
                 if all_items[index].get(key) != expected.get(key):
                     raise ValueError(f"Existing manifest does not match config at row {index + 1} field {key}")
         used_triples = {
@@ -226,9 +241,11 @@ def main() -> int:
                             "label": item["label"],
                             "requires_safety_think": item["requires_safety_think"],
                             "instruction": item["instruction"],
-                            "assistant_prefill": item["assistant_prefill"],
+                            "assistant_prefill": item.get("assistant_prefill", ""),
                             "prefix_depth": item["prefix_depth"],
                             "prefix_type": item["prefix_type"],
+                            "prefix_mode": item.get("prefix_mode"),
+                            "prefix_tokenish_len": item.get("prefix_tokenish_len"),
                             "error": error,
                         }
                         failed.append(failed_row)
@@ -303,6 +320,8 @@ def main() -> int:
         "failed_by_depth": count_by(failed_sorted, "prefix_depth"),
         "accepted_by_prefix_type": count_by(accepted_sorted, "prefix_type"),
         "failed_by_prefix_type": count_by(failed_sorted, "prefix_type"),
+        "accepted_by_prefix_mode": count_by(accepted_sorted, "prefix_mode"),
+        "failed_by_prefix_mode": count_by(failed_sorted, "prefix_mode"),
         "accepted_by_label": count_by(accepted_sorted, "label"),
         "safety_think_position_in_target": dict(Counter(block_position(row["response"]) for row in accepted_sorted)),
         "safety_think_position_in_full_trajectory": {"after_assistant_prefill": len(accepted_sorted)},
@@ -316,11 +335,11 @@ def main() -> int:
             "thinking": config["teacher"].get("thinking"),
         },
         "files": {
-            "manifest": str(manifest_path),
-            "annotations": str(annotations_path),
-            "failed": str(failed_path) if failed_sorted else None,
-            "sft_train": str(output_dir / "sft_train.jsonl"),
-            "sft_val": str(output_dir / "sft_val.jsonl"),
+            "manifest": repo_relative(manifest_path),
+            "annotations": repo_relative(annotations_path),
+            "failed": repo_relative(failed_path) if failed_sorted else None,
+            "sft_train": repo_relative(output_dir / "sft_train.jsonl"),
+            "sft_val": repo_relative(output_dir / "sft_val.jsonl"),
         },
     }
     write_json(report_path, report)

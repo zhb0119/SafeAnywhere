@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_INPUT = ROOT / "build/mixed_safechain1k_prefix500/sft_val.jsonl"
-DEFAULT_OUTPUT_DIR = ROOT / "build/eval/safeanywhere_v1"
+SRC = ROOT / "src"
+sys.path.insert(0, str(SRC))
+
+from safeanywhere.io_utils import resolve_existing_project_path  # noqa: E402
+
+
+DEFAULT_INPUT = ROOT / "build/data_build/safeanywhere_sft_v1/sft_val.jsonl"
+DEFAULT_OUTPUT_DIR = ROOT / "build/data_build/eval/safeanywhere_v1_1532/eval_set"
 
 BENIGN_LABELS = {"vanilla_benign", "adversarial_benign"}
 HARMFUL_LABELS = {"vanilla_harmful", "adversarial_harmful"}
@@ -114,21 +121,28 @@ def rows_from_prefix(row: dict[str, Any], include_direct: bool) -> list[dict[str
     return rows
 
 
-def cap_rows_by_task(rows: list[dict[str, Any]], max_per_task: int | None) -> list[dict[str, Any]]:
-    if max_per_task is None or max_per_task <= 0:
+def cap_rows_by_task(rows: list[dict[str, Any]], max_per_task: int | None, task_limits: dict[str, int] | None = None) -> list[dict[str, Any]]:
+    task_limits = task_limits or {}
+    if (max_per_task is None or max_per_task <= 0) and not task_limits:
         return rows
     counts: defaultdict[str, int] = defaultdict(int)
     capped = []
     for row in rows:
         task = row["task"]
-        if counts[task] >= max_per_task:
+        limit = task_limits.get(task, max_per_task)
+        if limit is not None and limit > 0 and counts[task] >= limit:
             continue
         capped.append(row)
         counts[task] += 1
     return capped
 
 
-def build_eval_rows(input_path: Path, include_prefix_direct: bool, max_per_task: int | None) -> list[dict[str, Any]]:
+def build_eval_rows(
+    input_path: Path,
+    include_prefix_direct: bool,
+    max_per_task: int | None,
+    task_limits: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     eval_rows = []
     for row in read_jsonl(input_path):
         attack_type = row.get("attack_type")
@@ -138,11 +152,12 @@ def build_eval_rows(input_path: Path, include_prefix_direct: bool, max_per_task:
             eval_rows.extend(rows_from_prefix(row, include_direct=include_prefix_direct))
         else:
             raise ValueError(f"Unsupported attack_type in {row.get('id')}: {attack_type}")
-    return cap_rows_by_task(eval_rows, max_per_task)
+    return cap_rows_by_task(eval_rows, max_per_task, task_limits)
 
 
-def write_outputs(rows: list[dict[str, Any]], output_dir: Path) -> dict[str, Any]:
+def write_outputs(rows: list[dict[str, Any]], output_dir: Path, max_per_task: int | None, task_limits: dict[str, int]) -> dict[str, Any]:
     ensure_dir(output_dir)
+    tasks_dir = ensure_dir(output_dir / "tasks")
     all_path = output_dir / "safeanywhere_eval.jsonl"
     write_jsonl(all_path, rows)
 
@@ -150,7 +165,7 @@ def write_outputs(rows: list[dict[str, Any]], output_dir: Path) -> dict[str, Any
     label_counts = Counter(str(row.get("label")) for row in rows)
     task_files = {}
     for task in sorted(task_counts):
-        path = output_dir / f"{task}.jsonl"
+        path = tasks_dir / f"{task}.jsonl"
         write_jsonl(path, [row for row in rows if row["task"] == task])
         task_files[task] = str(path)
 
@@ -159,13 +174,34 @@ def write_outputs(rows: list[dict[str, Any]], output_dir: Path) -> dict[str, Any
         "total": len(rows),
         "by_task": dict(task_counts),
         "by_label": dict(label_counts),
+        "sampling": {
+            "max_per_task": max_per_task,
+            "task_limits": task_limits,
+        },
         "files": {
             "all": str(all_path),
-            **task_files,
+            "tasks_dir": str(tasks_dir),
+            "tasks": task_files,
         },
     }
     write_json(output_dir / "report.json", report)
     return report
+
+
+def parse_task_limits(items: list[str] | None) -> dict[str, int]:
+    limits: dict[str, int] = {}
+    for item in items or []:
+        if "=" not in item:
+            raise ValueError(f"--task-limit must be formatted as task=n, got: {item}")
+        task, raw_limit = item.split("=", 1)
+        task = task.strip()
+        limit = int(raw_limit)
+        if not task:
+            raise ValueError(f"Empty task in --task-limit {item}")
+        if limit <= 0:
+            raise ValueError(f"--task-limit must be positive, got: {item}")
+        limits[task] = limit
+    return limits
 
 
 def main() -> int:
@@ -173,19 +209,23 @@ def main() -> int:
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--max-per-task", type=int, default=None)
+    parser.add_argument("--task-limit", action="append", default=None, help="Per-task cap, formatted as task=n. Repeatable.")
     parser.add_argument(
         "--no-prefix-direct",
         action="store_true",
         help="Do not create direct harmful eval rows from dangerous-prefix prompts.",
     )
     args = parser.parse_args()
+    task_limits = parse_task_limits(args.task_limit)
 
+    input_path = resolve_existing_project_path(args.input, ROOT)
     rows = build_eval_rows(
-        input_path=args.input,
+        input_path=input_path,
         include_prefix_direct=not args.no_prefix_direct,
         max_per_task=args.max_per_task,
+        task_limits=task_limits,
     )
-    report = write_outputs(rows, args.output_dir)
+    report = write_outputs(rows, args.output_dir, args.max_per_task, task_limits)
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

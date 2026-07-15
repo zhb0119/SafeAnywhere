@@ -9,10 +9,14 @@ from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+sys.path.insert(0, str(SRC))
+
+from safeanywhere.io_utils import resolve_existing_project_path  # noqa: E402
 
 
-DEFAULT_TRAIN = ROOT / "build/mixed_safechain1k_prefix500/train_lf_v1_spanmasked.jsonl"
-DEFAULT_VAL = ROOT / "build/mixed_safechain1k_prefix500/val_lf_v1_spanmasked.jsonl"
+DEFAULT_TRAIN = ROOT / "build/data_build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl"
+DEFAULT_VAL = ROOT / "build/data_build/safeanywhere_sft_v1/val_lf_v1_spanmasked.jsonl"
 DEFAULT_LF_ROOT = ROOT.parent / "LLaMA-Factory"
 LOCAL_IGNORE_INDEX = -100
 
@@ -239,9 +243,12 @@ def main() -> int:
     elif not args.structure_only:
         renderer, ignore_index = LocalSafeAnywhereRenderer(), LOCAL_IGNORE_INDEX
 
+    train_path = resolve_existing_project_path(args.train, ROOT)
+    val_path = resolve_existing_project_path(args.val, ROOT)
+
     report = {
-        "train": validate_file(args.train, renderer, ignore_index, args.max_render_checks),
-        "val": validate_file(args.val, renderer, ignore_index, args.max_render_checks),
+        "train": validate_file(train_path, renderer, ignore_index, args.max_render_checks),
+        "val": validate_file(val_path, renderer, ignore_index, args.max_render_checks),
         "renderer": args.renderer,
         "template": args.template,
         "structure_only": args.structure_only,

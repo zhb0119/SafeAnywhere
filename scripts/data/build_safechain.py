@@ -33,6 +33,14 @@ from safeanywhere.teacher import call_teacher, mock_teacher, teacher_settings  #
 load_dotenv(ROOT / ".env")
 
 
+def repo_relative(path: str | Path) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return dict(Counter(str(row.get(key)) for row in rows))
 
@@ -42,7 +50,10 @@ def target_counts(config: dict[str, Any]) -> dict[str, int]:
 
 
 def sanitize_sampling_report(report: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in report.items() if k != "_state"}
+    cleaned = {k: v for k, v in report.items() if k != "_state"}
+    if "source_path" in cleaned:
+        cleaned["source_path"] = repo_relative(cleaned["source_path"])
+    return cleaned
 
 
 def row_without_order(row: dict[str, Any]) -> dict[str, Any]:
@@ -332,11 +343,11 @@ def main() -> int:
             "thinking": config["teacher"].get("thinking"),
         },
         "files": {
-            "manifest": str(manifest_path),
-            "annotations": str(annotations_path),
-            "failed": str(failed_path) if failed else None,
-            "sft_train": str(output_dir / "sft_train.jsonl"),
-            "sft_val": str(output_dir / "sft_val.jsonl"),
+            "manifest": repo_relative(manifest_path),
+            "annotations": repo_relative(annotations_path),
+            "failed": repo_relative(failed_path) if failed else None,
+            "sft_train": repo_relative(output_dir / "sft_train.jsonl"),
+            "sft_val": repo_relative(output_dir / "sft_val.jsonl"),
         },
     }
     write_json(report_path, report)

@@ -1,3 +1,0 @@
-safeanywhere_val:
-  path: build/mixed_safechain1k_prefix500/val_lf_v1_spanmasked.jsonl
-  source: local

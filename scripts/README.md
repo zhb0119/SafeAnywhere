@@ -14,10 +14,12 @@ run_eval_comparison.sh     Run SafeAnywhere custom eval end to end.
 
 ```text
 data/       Dataset construction, merge, LLaMA-Factory export, mask validation.
-eval/       Custom eval set building, generation, heuristic scoring, LLM judge scoring, reports.
-external/   External benchmark preparation and runner command generation.
+eval/       Custom eval set building, generation, LLM judge scoring, reports.
+external/   External benchmark preparation and generation helpers.
 legacy/     Historical one-off workflows kept for reproducibility.
 utils/      Small utility CLIs.
 ```
+
+Current harmful-prefix data uses HEx-PHI `source_excerpt` prefixes and SafeChain harmful `generated_compliance` prefixes. The old redacted template path is retained only as a legacy-compatible mode.
 
 Historical numbered commands have moved into the organized implementation directories. Use the paths in this README for new runs.

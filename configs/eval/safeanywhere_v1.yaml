@@ -1,0 +1,51 @@
+eval_name: safeanywhere_v1
+
+paths:
+  eval_dir: build/data_build/eval/safeanywhere_v1_1532
+  eval_input: build/data_build/safeanywhere_sft_v1/sft_val.jsonl
+  eval_set_subdir: eval_set
+  runs_subdir: runs
+  comparisons_subdir: comparisons
+
+models:
+  base_model: ../models/Qwen3-0.6B
+  candidate:
+    name: sft
+    adapter: runs/qwen3_safeanywhere_lora_sft_v1
+  baseline:
+    name: baseline_sft
+    adapter: ""
+
+eval_set:
+  include_prefix_direct: true
+  sampling:
+    # Empty/null means full eval. Set this for a quick balanced smoke test,
+    # e.g. max_per_task: 5.
+    max_per_task:
+    # Per-task limits override max_per_task when set.
+    per_task:
+      benign_utility: 5
+      over_refusal: 5
+      harmful_direct: 10 
+      prefix_recovery: 10
+
+generation:
+  max_new_tokens: 384
+  temperature: 0.0
+  top_p: 0.9
+  thinking_mode: "off"
+  dtype: bf16
+  device_map: auto
+  limit:
+  system_prompt:
+  output_mode: compact
+  include_reference: false
+  include_raw_prediction: false
+  include_rendered_prompt: false
+
+judge:
+  model:
+  api_key_env:
+  base_url_env:
+  model_env:
+  max_field_chars:

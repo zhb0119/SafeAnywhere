@@ -2,12 +2,19 @@ dataset_name: safeanywhere_sft_v1
 seed: 20260706
 
 paths:
-  output_dir: build/safeanywhere_sft_v1
+  output_dir: build/data_build/safeanywhere_sft_v1
   safechain_jsonl: data/UWNSL__SafeChain__train.jsonl
   hex_phi_jsonl: data/Harmful-HEx-PHI.jsonl
 
 split:
   val_ratio: 0.10
+
+pipeline:
+  tasks:
+    - harmful_prefix
+  harmful_prefix_sources:
+    - safechain_harmful
+  finalize: false
 
 tasks:
   safechain:
@@ -28,39 +35,33 @@ tasks:
     max_replacements: 200
     sources:
       hex_phi:
-        total: 1200
+        prefix_mode: source_excerpt
+        total: 600
         depth_counts:
-          8: 160
-          16: 200
-          32: 240
-          64: 240
-          128: 200
-          200: 160
-        prefix_type_counts:
-          affirmative_prefix: 240
-          outline_prefix: 200
-          materials_prefix: 160
-          source_link_prefix: 160
-          roleplay_acceptance_prefix: 160
-          code_prefix: 140
-          evasion_prefix: 140
+          8: 80
+          16: 100
+          32: 120
+          64: 120
+          128: 100
+          200: 80
       safechain_harmful:
-        total: 1600
+        prefix_mode: generated_compliance
+        total: 300
         depth_counts:
-          8: 200
-          16: 250
-          32: 350
-          64: 350
-          128: 250
-          200: 200
+          8: 50
+          16: 50
+          32: 50
+          64: 50
+          128: 50
+          200: 50
         prefix_type_counts:
-          affirmative_prefix: 260
-          outline_prefix: 260
-          materials_prefix: 220
-          source_link_prefix: 180
-          roleplay_acceptance_prefix: 260
-          code_prefix: 210
-          evasion_prefix: 210
+          affirmative_prefix: 49
+          outline_prefix: 49
+          materials_prefix: 41
+          source_link_prefix: 34
+          roleplay_acceptance_prefix: 49
+          code_prefix: 39
+          evasion_prefix: 39
 
 teacher:
   provider: deepseek
@@ -104,5 +105,5 @@ validation:
 export:
   llamafactory: true
   prefill_separator: "\n"
-  train_dataset_yaml: train/llamafactory/dataset_safeanywhere_sft_v1_train.yaml
-  val_dataset_yaml: train/llamafactory/dataset_safeanywhere_sft_v1_val.yaml
+  train_dataset_yaml: configs/sft/llamafactory/dataset_safeanywhere_sft_v1_train.yaml
+  val_dataset_yaml: configs/sft/llamafactory/dataset_safeanywhere_sft_v1_val.yaml

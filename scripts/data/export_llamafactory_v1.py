@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+sys.path.insert(0, str(SRC))
+
+from safeanywhere.io_utils import resolve_existing_project_path  # noqa: E402
 
 
-DEFAULT_INPUT_DIR = ROOT / "build/mixed_safechain1k_prefix500"
+DEFAULT_INPUT_DIR = ROOT / "build/data_build/safeanywhere_sft_v1"
 DEFAULT_OUTPUT_DIR = DEFAULT_INPUT_DIR
-DEFAULT_TRAIN_DATASET_YAML = ROOT / "train/llamafactory/dataset_safeanywhere_1500_train.yaml"
-DEFAULT_VAL_DATASET_YAML = ROOT / "train/llamafactory/dataset_safeanywhere_1500_val.yaml"
+DEFAULT_TRAIN_DATASET_YAML = ROOT / "configs/sft/llamafactory/dataset_safeanywhere_sft_v1_train.yaml"
+DEFAULT_VAL_DATASET_YAML = ROOT / "configs/sft/llamafactory/dataset_safeanywhere_sft_v1_val.yaml"
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -80,6 +85,7 @@ def extra_info(row: dict[str, Any], split: str) -> str:
         "requires_safety_think": row.get("requires_safety_think"),
         "prefix_depth": row.get("prefix_depth"),
         "prefix_type": row.get("prefix_type"),
+        "prefix_mode": row.get("prefix_mode"),
     }
     return json.dumps({key: value for key, value in metadata.items() if value is not None}, ensure_ascii=False)
 
@@ -183,8 +189,8 @@ def export_file(input_path: Path, output_path: Path, split: str, prefill_separat
     }
 
 
-def repo_relative_path(path: Path) -> Path:
-    path = path.resolve()
+def repo_relative_path(path: str | Path) -> Path:
+    path = Path(path).resolve()
     try:
         return path.relative_to(ROOT)
     except ValueError:
@@ -216,8 +222,9 @@ def main() -> int:
     parser.add_argument("--prefill-separator", default="\n")
     args = parser.parse_args()
 
-    train_input = args.input_dir / "sft_train.jsonl"
-    val_input = args.input_dir / "sft_val.jsonl"
+    input_dir = resolve_existing_project_path(args.input_dir, ROOT)
+    train_input = input_dir / "sft_train.jsonl"
+    val_input = input_dir / "sft_val.jsonl"
     output_dir = ensure_dir(args.output_dir)
     train_output = output_dir / "train_lf_v1_spanmasked.jsonl"
     val_output = output_dir / "val_lf_v1_spanmasked.jsonl"
@@ -233,10 +240,10 @@ def main() -> int:
         "train": train_counts,
         "val": val_counts,
         "files": {
-            "train_lf_v1": str(train_output),
-            "val_lf_v1": str(val_output),
-            "train_dataset_yaml": str(args.train_dataset_yaml),
-            "val_dataset_yaml": str(args.val_dataset_yaml),
+            "train_lf_v1": str(repo_relative_path(train_output)),
+            "val_lf_v1": str(repo_relative_path(val_output)),
+            "train_dataset_yaml": str(repo_relative_path(args.train_dataset_yaml)),
+            "val_dataset_yaml": str(repo_relative_path(args.val_dataset_yaml)),
         },
     }
     report_path = output_dir / "llamafactory_v1_export_report.json"

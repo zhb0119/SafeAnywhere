@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_EVAL = ROOT / "build/eval/safeanywhere_v1/safeanywhere_eval.jsonl"
-DEFAULT_OUTPUT = ROOT / "build/eval/safeanywhere_v1/predictions.jsonl"
+SRC = ROOT / "src"
+sys.path.insert(0, str(SRC))
+
+from safeanywhere.io_utils import resolve_existing_project_path  # noqa: E402
+
+
+DEFAULT_EVAL = ROOT / "build/data_build/eval/safeanywhere_v1_1532/eval_set/safeanywhere_eval.jsonl"
+DEFAULT_OUTPUT = ROOT / "build/data_build/eval/safeanywhere_v1_1532/runs/default/predictions.jsonl"
 
 
 def read_jsonl(path: str | Path) -> Iterable[dict[str, Any]]:
@@ -29,18 +36,52 @@ def ensure_dir(path: str | Path) -> Path:
     return path
 
 
-def render_chatml(row: dict[str, Any], system_prompt: str | None = None) -> str:
+def render_chatml(row: dict[str, Any], system_prompt: str | None = None, thinking_mode: str = "auto") -> str:
     chunks = []
     if system_prompt:
         chunks.append(f"<|im_start|>system\n{system_prompt}<|im_end|>\n")
     chunks.append(f"<|im_start|>user\n{row['prompt']}<|im_end|>\n")
     chunks.append("<|im_start|>assistant\n")
+    if thinking_mode == "off":
+        chunks.append("<think>\n\n</think>\n\n")
     assistant_prefill = row.get("assistant_prefill")
     if assistant_prefill:
         chunks.append(assistant_prefill)
         if not assistant_prefill.endswith("\n"):
             chunks.append("\n")
     return "".join(chunks)
+
+
+def render_prompt(tokenizer: Any, row: dict[str, Any], system_prompt: str | None = None, thinking_mode: str = "auto") -> str:
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": row["prompt"]})
+
+    prompt_text: str | None = None
+    if getattr(tokenizer, "chat_template", None):
+        template_kwargs: dict[str, Any] = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if thinking_mode == "off":
+            template_kwargs["enable_thinking"] = False
+        elif thinking_mode == "on":
+            template_kwargs["enable_thinking"] = True
+        try:
+            prompt_text = tokenizer.apply_chat_template(messages, **template_kwargs)
+        except TypeError:
+            prompt_text = None
+
+    if prompt_text is None:
+        prompt_text = render_chatml(row, system_prompt=system_prompt, thinking_mode=thinking_mode)
+
+    assistant_prefill = row.get("assistant_prefill")
+    if assistant_prefill:
+        prompt_text += assistant_prefill
+        if not assistant_prefill.endswith("\n"):
+            prompt_text += "\n"
+    return prompt_text
 
 
 def truncate_at_stop(text: str) -> str:
@@ -97,8 +138,13 @@ def generate_one(
     temperature: float,
     top_p: float,
     system_prompt: str | None,
+    thinking_mode: str,
+    output_mode: str,
+    include_reference: bool,
+    include_raw_prediction: bool,
+    include_rendered_prompt: bool,
 ) -> dict[str, Any]:
-    prompt_text = render_chatml(row, system_prompt=system_prompt)
+    prompt_text = render_prompt(tokenizer, row, system_prompt=system_prompt, thinking_mode=thinking_mode)
     inputs = tokenizer(prompt_text, return_tensors="pt")
     inputs = {key: value.to(model.device) for key, value in inputs.items()}
     do_sample = temperature > 0
@@ -120,17 +166,41 @@ def generate_one(
     continuation_ids = output_ids[inputs["input_ids"].shape[-1] :]
     raw_prediction = tokenizer.decode(continuation_ids, skip_special_tokens=False)
     prediction = truncate_at_stop(raw_prediction)
-    return {
-        **row,
-        "rendered_prompt": prompt_text,
-        "raw_prediction": raw_prediction,
-        "prediction": prediction,
-        "generation_config": {
-            "max_new_tokens": max_new_tokens,
-            "temperature": temperature,
-            "top_p": top_p,
-        },
+    generation_config = {
+        "max_new_tokens": max_new_tokens,
+        "temperature": temperature,
+        "top_p": top_p,
+        "thinking_mode": thinking_mode,
     }
+    if output_mode == "full":
+        return {
+            **row,
+            "rendered_prompt": prompt_text,
+            "raw_prediction": raw_prediction,
+            "prediction": prediction,
+            "generation_config": generation_config,
+        }
+
+    result = {
+        "id": row.get("id"),
+        "source_id": row.get("source_id"),
+        "source": row.get("source"),
+        "attack_type": row.get("attack_type"),
+        "task": row.get("task"),
+        "label": row.get("label"),
+        "prompt": row.get("prompt"),
+        "assistant_prefill": row.get("assistant_prefill"),
+        "expected": row.get("expected", {}),
+        "prediction": prediction,
+        "generation_config": generation_config,
+    }
+    if include_reference:
+        result["reference"] = row.get("reference")
+    if include_raw_prediction:
+        result["raw_prediction"] = raw_prediction
+    if include_rendered_prompt:
+        result["rendered_prompt"] = prompt_text
+    return result
 
 
 def main() -> int:
@@ -142,10 +212,20 @@ def main() -> int:
     parser.add_argument("--max-new-tokens", type=int, default=384)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument(
+        "--thinking-mode",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Qwen3 thinking control. Use off to pass enable_thinking=False through the chat template.",
+    )
     parser.add_argument("--dtype", choices=["auto", "bf16", "fp16", "fp32"], default="bf16")
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--system-prompt", default=None)
+    parser.add_argument("--output-mode", choices=["compact", "full"], default="compact")
+    parser.add_argument("--include-reference", action="store_true")
+    parser.add_argument("--include-raw-prediction", action="store_true")
+    parser.add_argument("--include-rendered-prompt", action="store_true")
     parser.add_argument("--trust-remote-code", action="store_true", default=True)
     args = parser.parse_args()
 
@@ -157,7 +237,8 @@ def main() -> int:
         trust_remote_code=args.trust_remote_code,
     )
 
-    rows = list(read_jsonl(args.eval_file))
+    eval_file = resolve_existing_project_path(args.eval_file, ROOT)
+    rows = list(read_jsonl(eval_file))
     if args.limit is not None:
         rows = rows[: args.limit]
 
@@ -172,6 +253,11 @@ def main() -> int:
                 temperature=args.temperature,
                 top_p=args.top_p,
                 system_prompt=args.system_prompt,
+                thinking_mode=args.thinking_mode,
+                output_mode=args.output_mode,
+                include_reference=args.include_reference,
+                include_raw_prediction=args.include_raw_prediction,
+                include_rendered_prompt=args.include_rendered_prompt,
             )
             f.write(json.dumps(result, ensure_ascii=False, sort_keys=False) + "\n")
             f.flush()

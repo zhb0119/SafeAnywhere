@@ -13,13 +13,14 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from safeanywhere.filters import BLOCK_RE, parse_block_fields, strip_safety_blocks  # noqa: E402
+from safeanywhere.io_utils import resolve_existing_project_path  # noqa: E402
 
 
-DEFAULT_SAFECHAIN_TRAIN = ROOT / "build/safechain_pilot_1k/sft_train.jsonl"
-DEFAULT_SAFECHAIN_VAL = ROOT / "build/safechain_pilot_1k/sft_val.jsonl"
-DEFAULT_PREFIX_TRAIN = ROOT / "build/hex_phi_prefix_500/sft_train.jsonl"
-DEFAULT_PREFIX_VAL = ROOT / "build/hex_phi_prefix_500/sft_val.jsonl"
-DEFAULT_OUTPUT_DIR = ROOT / "build/mixed_safechain1k_prefix500"
+DEFAULT_SAFECHAIN_TRAIN = ROOT / "build/data_build/safechain_pilot_1k/sft_train.jsonl"
+DEFAULT_SAFECHAIN_VAL = ROOT / "build/data_build/safechain_pilot_1k/sft_val.jsonl"
+DEFAULT_PREFIX_TRAIN = ROOT / "build/data_build/hex_phi_prefix_500/sft_train.jsonl"
+DEFAULT_PREFIX_VAL = ROOT / "build/data_build/hex_phi_prefix_500/sft_val.jsonl"
+DEFAULT_OUTPUT_DIR = ROOT / "build/data_build/mixed_safechain1k_prefix500"
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -53,6 +54,14 @@ def write_json(path: str | Path, obj: Any) -> None:
     path = Path(path)
     ensure_dir(path.parent)
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def repo_relative(path: str | Path) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def normalize_loss_mask(value: Any) -> int:
@@ -303,12 +312,14 @@ def main() -> int:
             f"--prefix-train and --prefix-val must be passed the same number of times, got {len(prefix_train_paths)} and {len(prefix_val_paths)}"
         )
 
-    train = load_rows(args.safechain_train, "train", "safechain")
-    val = load_rows(args.safechain_val, "val", "safechain")
+    safechain_train = resolve_existing_project_path(args.safechain_train, ROOT)
+    safechain_val = resolve_existing_project_path(args.safechain_val, ROOT)
+    train = load_rows(safechain_train, "train", "safechain")
+    val = load_rows(safechain_val, "val", "safechain")
     for path in prefix_train_paths:
-        train.extend(load_rows(path, "train", "prefix"))
+        train.extend(load_rows(resolve_existing_project_path(path, ROOT), "train", "prefix"))
     for path in prefix_val_paths:
-        val.extend(load_rows(path, "val", "prefix"))
+        val.extend(load_rows(resolve_existing_project_path(path, ROOT), "val", "prefix"))
     require_unique_ids(train + val)
 
     output_dir = ensure_dir(args.output_dir)
@@ -322,13 +333,13 @@ def main() -> int:
         train,
         val,
         {
-            "sft_train": str(train_path),
-            "sft_val": str(val_path),
-            "safechain_train": str(args.safechain_train),
-            "safechain_val": str(args.safechain_val),
-            "prefix_train": [str(path) for path in prefix_train_paths],
-            "prefix_val": [str(path) for path in prefix_val_paths],
-            "report": str(report_path),
+            "sft_train": repo_relative(train_path),
+            "sft_val": repo_relative(val_path),
+            "safechain_train": repo_relative(safechain_train),
+            "safechain_val": repo_relative(safechain_val),
+            "prefix_train": [repo_relative(resolve_existing_project_path(path, ROOT)) for path in prefix_train_paths],
+            "prefix_val": [repo_relative(resolve_existing_project_path(path, ROOT)) for path in prefix_val_paths],
+            "report": repo_relative(report_path),
         },
     )
     assert_expected_counts(report, strict=not args.no_strict_counts)

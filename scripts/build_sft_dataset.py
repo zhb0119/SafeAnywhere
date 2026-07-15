@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import shlex
 import subprocess
 import sys
@@ -16,9 +17,10 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from safeanywhere.io_utils import ensure_dir, read_config, read_jsonl, write_json, write_jsonl  # noqa: E402
+from safeanywhere.export import make_sft_rows as make_cold_start_sft_rows, split_train_val as split_cold_start_train_val  # noqa: E402
 
 
-DEFAULT_CONFIG = ROOT / "configs/safeanywhere_sft_v1.yaml"
+DEFAULT_CONFIG = ROOT / "configs/data_build/safeanywhere_sft_v1.yaml"
 PROMPT_WRAPPER_NEEDLES = [
     "You are SafeAnywhere, a helpful assistant",
     "Rules for <safety_think>:",
@@ -41,6 +43,8 @@ PREFIX_SOURCE_BUILDERS = {
         "source_kind": "safechain_harmful_prefix",
     },
 }
+BUILD_TASKS = ("safechain", "harmful_prefix")
+GENERATED_CONFIG_SUFFIX = ".yaml"
 
 
 def repo_path(value: str | Path) -> Path:
@@ -48,6 +52,21 @@ def repo_path(value: str | Path) -> Path:
     if path.is_absolute():
         return path
     return (ROOT / path).resolve()
+
+
+def resolve_build_config_path(value: str | Path) -> Path:
+    path = repo_path(value)
+    if path.exists():
+        return path
+
+    raw = Path(value).expanduser()
+    if not raw.is_absolute() and raw.parts and raw.parts[0] == "configs" and len(raw.parts) == 2:
+        migrated = ROOT / "configs" / "data_build" / raw.name
+        if migrated.exists():
+            print(f"Config moved: {raw} -> {repo_relative(migrated)}", flush=True)
+            return migrated.resolve()
+
+    raise FileNotFoundError(f"Config not found: {repo_relative(path)}")
 
 
 def repo_relative(path: str | Path) -> str:
@@ -114,6 +133,181 @@ def run_command(name: str, cmd: list[str], log_file: Path, verbose: bool) -> Non
         raise RuntimeError(f"Command failed: {format_cmd(cmd)}. See log: {repo_relative(log_file)}")
 
 
+def selected_build_tasks(config: dict[str, Any]) -> list[str]:
+    raw = config.get("pipeline", {}).get("tasks", list(BUILD_TASKS))
+    if isinstance(raw, str) and raw in {"all", "*"}:
+        return list(BUILD_TASKS)
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("pipeline.tasks must be a non-empty list, 'all', or '*'.")
+    tasks = list(dict.fromkeys(str(task) for task in raw))
+    unknown = sorted(set(tasks) - set(BUILD_TASKS))
+    if unknown:
+        raise ValueError(f"Unsupported pipeline tasks: {unknown}. Supported tasks: {list(BUILD_TASKS)}")
+    return tasks
+
+
+def should_finalize(config: dict[str, Any], tasks: list[str]) -> bool:
+    pipeline = config.get("pipeline", {})
+    if "finalize" in pipeline:
+        return bool(pipeline["finalize"])
+    return set(tasks) == set(BUILD_TASKS)
+
+
+def selected_harmful_prefix_sources(config: dict[str, Any]) -> list[str]:
+    sources = config["tasks"]["harmful_prefix"]["sources"]
+    raw = config.get("pipeline", {}).get("harmful_prefix_sources", list(sources))
+    if isinstance(raw, str) and raw in {"all", "*"}:
+        return list(sources)
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("pipeline.harmful_prefix_sources must be a non-empty list, 'all', or '*'.")
+    selected = list(dict.fromkeys(str(source) for source in raw))
+    unknown = sorted(set(selected) - set(sources))
+    if unknown:
+        raise ValueError(f"Unsupported harmful_prefix sources: {unknown}. Supported sources: {list(sources)}")
+    unsupported = sorted(set(selected) - set(PREFIX_SOURCE_BUILDERS))
+    if unsupported:
+        raise ValueError(f"Unsupported harmful_prefix builders: {unsupported}")
+    return selected
+
+
+def configured_harmful_prefix_source_dirs(config: dict[str, Any], harmful_dir: Path) -> dict[str, Path]:
+    return {
+        source_name: harmful_dir / PREFIX_SOURCE_BUILDERS[source_name]["output_subdir"]
+        for source_name in config["tasks"]["harmful_prefix"]["sources"]
+    }
+
+
+def make_prefix_sft_rows(rows: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "id": row["id"],
+                "prompt": row["instruction"],
+                "response": row["response"],
+                "messages": row["messages"],
+                "source": row["source"],
+                "source_id": row["source_id"],
+                "attack_type": row["attack_type"],
+                "label": row["label"],
+                "requires_safety_think": row["requires_safety_think"],
+                "prefix_depth": row["prefix_depth"],
+                "prefix_type": row["prefix_type"],
+                "prefix_mode": row.get("prefix_mode"),
+                "prefix_tokenish_len": row.get("prefix_tokenish_len"),
+                "assistant_prefill": row["assistant_prefill"],
+            }
+        )
+    return out
+
+
+def split_prefix_train_val(rows: list[dict[str, Any]], seed: int, val_ratio: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_source.setdefault(str(row["source_id"]), []).append(row)
+    groups = list(by_source.values())
+    rng = random.Random(seed)
+    rng.shuffle(groups)
+    target_val = int(round(len(rows) * val_ratio))
+    val: list[dict[str, Any]] = []
+    train: list[dict[str, Any]] = []
+    for group in groups:
+        if len(val) < target_val:
+            val.extend(group)
+        else:
+            train.extend(group)
+    return train, val
+
+
+def child_config_paths(generated_config_dir: Path) -> list[Path]:
+    if not generated_config_dir.exists():
+        return []
+    return sorted(path for path in generated_config_dir.glob(f"*{GENERATED_CONFIG_SUFFIX}") if path.is_file())
+
+
+def child_output_dir_from_config(config: dict[str, Any]) -> Path:
+    return repo_path(config["paths"]["output_dir"])
+
+
+def export_child_sft_split(config_path: Path) -> dict[str, Any] | None:
+    config = read_config(config_path)
+    output_dir = child_output_dir_from_config(config)
+    annotations_path = output_dir / "annotations.jsonl"
+    if not annotations_path.exists():
+        return None
+
+    rows = read_jsonl_list(annotations_path)
+    seed = int(config["seed"])
+    val_ratio = float(config.get("sampling", {}).get("val_ratio", config.get("split", {}).get("val_ratio", 0.1)))
+
+    sampling = config.get("sampling", {})
+    dataset_name = str(config.get("dataset_name", ""))
+    is_prefix = (
+        "prefix_mode" in sampling
+        or "prefix_type_counts" in sampling
+        or "harmful_prefix" in dataset_name
+    )
+    if is_prefix:
+        sft_rows = make_prefix_sft_rows(rows, config)
+        train, val = split_prefix_train_val(sft_rows, seed, val_ratio)
+        data_type = "harmful_prefix"
+    elif "per_label" in sampling:
+        sft_rows = make_cold_start_sft_rows(rows, config)
+        train, val = split_cold_start_train_val(sft_rows, seed, val_ratio)
+        data_type = "safechain"
+    else:
+        return None
+
+    write_jsonl(output_dir / "sft_train.jsonl", train)
+    write_jsonl(output_dir / "sft_val.jsonl", val)
+
+    return {
+        "config": repo_relative(config_path),
+        "output_dir": repo_relative(output_dir),
+        "data_type": data_type,
+        "rows": len(rows),
+        "train": len(train),
+        "val": len(val),
+    }
+
+
+def export_all_child_sft_splits(generated_config_dir: Path) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for config_path in child_config_paths(generated_config_dir):
+        report = export_child_sft_split(config_path)
+        if report is not None:
+            reports.append(report)
+    return reports
+
+
+def prefix_source_name_from_config_path(config_path: Path) -> str:
+    stem = config_path.stem
+    if stem.startswith("harmful_prefix_"):
+        return stem.removeprefix("harmful_prefix_")
+    return stem
+
+
+def validate_harmful_prefix_sampling(config: dict[str, Any], source_names: list[str]) -> None:
+    for source_name in source_names:
+        source = config["tasks"]["harmful_prefix"]["sources"][source_name]
+        total = int(source["total"])
+        depth_total = sum(int(value) for value in source["depth_counts"].values())
+        if depth_total != total:
+            raise ValueError(
+                f"tasks.harmful_prefix.sources.{source_name}.depth_counts sum {depth_total} does not match total {total}"
+            )
+        if "prefix_type_counts" in source:
+            type_total = sum(int(value) for value in source["prefix_type_counts"].values())
+            if type_total != total:
+                raise ValueError(
+                    f"tasks.harmful_prefix.sources.{source_name}.prefix_type_counts sum {type_total} does not match total {total}"
+                )
+
+
 def child_common_args(output_dir: Path, args: argparse.Namespace) -> list[str]:
     out: list[str] = ["--workers", str(args.workers)]
     if args.mock:
@@ -159,6 +353,20 @@ def build_prefix_source_config(config: dict[str, Any], source_name: str, output_
     source = config["tasks"]["harmful_prefix"]["sources"][source_name]
     builder = PREFIX_SOURCE_BUILDERS[source_name]
     path_key = builder["path_key"]
+    prefix_task = config["tasks"]["harmful_prefix"]
+    sampling = {
+        "total": int(source["total"]),
+        "depth_counts": source["depth_counts"],
+        "val_ratio": float(source.get("val_ratio", config.get("split", {}).get("val_ratio", 0.1))),
+        "max_replacements": int(source.get("max_replacements", prefix_task.get("max_replacements", 200))),
+    }
+    if "prefix_type_counts" in source:
+        sampling["prefix_type_counts"] = source["prefix_type_counts"]
+    for key in ("prefix_mode",):
+        if key in source:
+            sampling[key] = source[key]
+        elif key in prefix_task:
+            sampling[key] = prefix_task[key]
     return {
         "dataset_name": f"{config['dataset_name']}_harmful_prefix_{source_name}",
         "seed": int(config["seed"]),
@@ -166,13 +374,7 @@ def build_prefix_source_config(config: dict[str, Any], source_name: str, output_
             path_key: repo_relative(repo_path(config["paths"][path_key])),
             "output_dir": repo_relative(output_dir),
         },
-        "sampling": {
-            "total": int(source["total"]),
-            "depth_counts": source["depth_counts"],
-            "prefix_type_counts": source["prefix_type_counts"],
-            "val_ratio": float(source.get("val_ratio", config.get("split", {}).get("val_ratio", 0.1))),
-            "max_replacements": int(source.get("max_replacements", config["tasks"]["harmful_prefix"].get("max_replacements", 200))),
-        },
+        "sampling": sampling,
         "teacher": common_teacher(config, prefix=True),
         "safety_block": config["safety_block"],
         "validation": config.get("validation", {}),
@@ -251,6 +453,7 @@ def build_harmful_prefix_report(
         "by_source": count_by(rows, "source"),
         "by_label": count_by(rows, "label"),
         "by_prefix_type": count_by(rows, "prefix_type"),
+        "by_prefix_mode": count_by(rows, "prefix_mode"),
         "by_prefix_depth": count_by(rows, "prefix_depth"),
         "dangerous_prefix_masks": count_masks(rows),
         "source_reports": reports,
@@ -293,7 +496,7 @@ def write_dataset_card(
         "## Data Types",
         "",
         "- `safechain`: cold-start safety-think targets from SafeChain labels.",
-        "- `harmful_prefix`: masked assistant-prefix recovery targets from HEx-PHI and SafeChain harmful prompts.",
+        "- `harmful_prefix`: masked assistant-prefix recovery targets from HEx-PHI source excerpts and SafeChain generated prefixes.",
         "",
         "## Mask Contract",
         "",
@@ -311,50 +514,69 @@ def write_dataset_card(
     (output_dir / "dataset_card.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def run_builder_steps(config: dict[str, Any], args: argparse.Namespace, generated_config_dir: Path, log_file: Path) -> dict[str, Path]:
+def run_builder_steps(
+    config: dict[str, Any],
+    args: argparse.Namespace,
+    generated_config_dir: Path,
+    log_file: Path,
+    tasks: list[str],
+    harmful_prefix_sources: list[str],
+) -> dict[str, Path]:
     python_bin = args.python_bin or sys.executable
     output_dir = repo_path(config["paths"]["output_dir"])
     safechain_dir = output_dir / "safechain"
     harmful_dir = output_dir / "harmful_prefix"
     source_dirs: dict[str, Path] = {}
 
-    safechain_config = build_safechain_config(config, safechain_dir)
-    safechain_config_path = generated_config_dir / "safechain.yaml"
-    write_yaml(safechain_config_path, safechain_config)
-    run_command(
-        "[1/6] Build safechain annotations",
-        [
-            python_bin,
-            "scripts/data/build_safechain.py",
-            "--config",
-            repo_relative(safechain_config_path),
-            *child_common_args(safechain_dir, args),
-        ],
-        log_file,
-        args.verbose,
-    )
+    if "safechain" in tasks:
+        safechain_config = build_safechain_config(config, safechain_dir)
+        safechain_config_path = generated_config_dir / "safechain.yaml"
+        write_yaml(safechain_config_path, safechain_config)
+        if (safechain_dir / "annotations.jsonl").exists():
+            print("[1/6] Skip safechain annotations (existing annotations found)", flush=True)
+        else:
+            run_command(
+                "[1/6] Build safechain annotations",
+                [
+                    python_bin,
+                    "scripts/data/build_safechain.py",
+                    "--config",
+                    repo_relative(safechain_config_path),
+                    *child_common_args(safechain_dir, args),
+                ],
+                log_file,
+                args.verbose,
+            )
+    else:
+        print("[1/6] Skip safechain annotations", flush=True)
 
-    for source_name in config["tasks"]["harmful_prefix"]["sources"]:
-        if source_name not in PREFIX_SOURCE_BUILDERS:
-            raise ValueError(f"Unsupported harmful_prefix source: {source_name}")
-        builder = PREFIX_SOURCE_BUILDERS[source_name]
-        source_dir = harmful_dir / builder["output_subdir"]
-        source_dirs[source_name] = source_dir
-        source_config = build_prefix_source_config(config, source_name, source_dir)
-        source_config_path = generated_config_dir / f"harmful_prefix_{source_name}.yaml"
-        write_yaml(source_config_path, source_config)
-        run_command(
-            f"[2/6] Build harmful_prefix/{source_name} annotations",
-            [
-                python_bin,
-                builder["script"],
-                "--config",
-                repo_relative(source_config_path),
-                *child_common_args(source_dir, args),
-            ],
-            log_file,
-            args.verbose,
-        )
+    if "harmful_prefix" in tasks:
+        for source_name in harmful_prefix_sources:
+            if source_name not in PREFIX_SOURCE_BUILDERS:
+                raise ValueError(f"Unsupported harmful_prefix source: {source_name}")
+            builder = PREFIX_SOURCE_BUILDERS[source_name]
+            source_dir = harmful_dir / builder["output_subdir"]
+            source_dirs[source_name] = source_dir
+            source_config = build_prefix_source_config(config, source_name, source_dir)
+            source_config_path = generated_config_dir / f"harmful_prefix_{source_name}.yaml"
+            write_yaml(source_config_path, source_config)
+            if (source_dir / "annotations.jsonl").exists():
+                print(f"[2/6] Skip harmful_prefix/{source_name} annotations (existing annotations found)", flush=True)
+            else:
+                run_command(
+                    f"[2/6] Build harmful_prefix/{source_name} annotations",
+                    [
+                        python_bin,
+                        builder["script"],
+                        "--config",
+                        repo_relative(source_config_path),
+                        *child_common_args(source_dir, args),
+                    ],
+                    log_file,
+                    args.verbose,
+                )
+    else:
+        print("[2/6] Skip harmful_prefix annotations", flush=True)
 
     return {"safechain": safechain_dir, "harmful_prefix": harmful_dir, **{f"source:{k}": v for k, v in source_dirs.items()}}
 
@@ -383,8 +605,8 @@ def run_merge_export_validate(
     python_bin = args.python_bin or sys.executable
     output_dir = repo_path(config["paths"]["output_dir"])
     export_cfg = config.get("export", {})
-    train_dataset_yaml = repo_path(export_cfg.get("train_dataset_yaml", "train/llamafactory/dataset_safeanywhere_sft_v1_train.yaml"))
-    val_dataset_yaml = repo_path(export_cfg.get("val_dataset_yaml", "train/llamafactory/dataset_safeanywhere_sft_v1_val.yaml"))
+    train_dataset_yaml = repo_path(export_cfg.get("train_dataset_yaml", "configs/sft/llamafactory/dataset_safeanywhere_sft_v1_train.yaml"))
+    val_dataset_yaml = repo_path(export_cfg.get("val_dataset_yaml", "configs/sft/llamafactory/dataset_safeanywhere_sft_v1_val.yaml"))
 
     run_command(
         "[3/6] Merge safechain + harmful_prefix",
@@ -486,6 +708,7 @@ def run_merge_export_validate(
         "counts": harmful_report.get("counts"),
         "by_source": harmful_report.get("by_source"),
         "by_prefix_type": harmful_report.get("by_prefix_type"),
+        "by_prefix_mode": harmful_report.get("by_prefix_mode"),
         "by_prefix_depth": harmful_report.get("by_prefix_depth"),
         "dangerous_prefix_masks": harmful_report.get("dangerous_prefix_masks"),
     }
@@ -497,6 +720,31 @@ def run_merge_export_validate(
 
     print("[6/6] Dataset ready", flush=True)
     return final_report
+
+
+def auto_export_subdatasets(
+    generated_config_dir: Path,
+    output_dir: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    export_reports = export_all_child_sft_splits(generated_config_dir)
+    harmful_split_path = output_dir / "harmful_prefix"
+    if not harmful_split_path.exists() and not export_reports:
+        return export_reports, None
+
+    harmful_report = None
+    source_dirs: dict[str, Path] = {}
+    if harmful_split_path.exists():
+        for config_path in child_config_paths(generated_config_dir):
+            child_config = read_config(config_path)
+            if "hex_phi_jsonl" not in child_config.get("paths", {}) and "prefix_mode" not in child_config.get("sampling", {}):
+                continue
+            source_dir = repo_path(child_config["paths"]["output_dir"])
+            if (source_dir / "annotations.jsonl").exists():
+                source_dirs[prefix_source_name_from_config_path(config_path)] = source_dir
+        if source_dirs:
+            _, _, harmful_report = assemble_harmful_prefix(harmful_split_path, source_dirs)
+
+    return export_reports, harmful_report
 
 
 def parse_args() -> argparse.Namespace:
@@ -513,25 +761,44 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
-    args.config_path = repo_path(args.config)
+    args.config_path = resolve_build_config_path(args.config)
     return args
 
 
 def main() -> int:
     args = parse_args()
     config = read_config(args.config_path)
+    tasks = selected_build_tasks(config)
+    finalize = should_finalize(config, tasks)
+    harmful_prefix_sources = selected_harmful_prefix_sources(config) if "harmful_prefix" in tasks else []
+    if "harmful_prefix" in tasks:
+        validate_harmful_prefix_sampling(config, harmful_prefix_sources)
     output_dir = repo_path(config["paths"]["output_dir"])
     generated_config_dir = ensure_dir(output_dir / "configs")
     log_file = output_dir / "build.log"
     if not args.verbose:
         ensure_dir(log_file.parent)
-        log_file.write_text("", encoding="utf-8")
+        with log_file.open("a", encoding="utf-8") as out:
+            out.write("\n\n# New build_sft_dataset invocation\n")
+            out.write(f"# config={repo_relative(args.config_path)} tasks={tasks} finalize={finalize}\n")
         print(f"Log: {repo_relative(log_file)}", flush=True)
 
-    dirs = run_builder_steps(config, args, generated_config_dir, log_file)
-    source_dirs = {key.removeprefix("source:"): value for key, value in dirs.items() if key.startswith("source:")}
-    _, _, harmful_report = assemble_harmful_prefix(dirs["harmful_prefix"], source_dirs)
+    print(f"Pipeline tasks: {tasks}", flush=True)
+    if harmful_prefix_sources:
+        print(f"Harmful-prefix sources: {harmful_prefix_sources}", flush=True)
+    print(f"Finalize mixed dataset: {finalize}", flush=True)
+    dirs = run_builder_steps(config, args, generated_config_dir, log_file, tasks, harmful_prefix_sources)
+    export_reports, harmful_report = auto_export_subdatasets(generated_config_dir, output_dir)
+    if harmful_report is None and (output_dir / "harmful_prefix" / "report.json").exists():
+        harmful_report = load_json(output_dir / "harmful_prefix" / "report.json")
+    if harmful_report is None:
+        raise RuntimeError("Cannot finalize without harmful_prefix report.")
     final_report = run_merge_export_validate(config, args, dirs, harmful_report, log_file)
+    if export_reports:
+        final_report["auto_export"] = {
+            "generated_configs": repo_relative(generated_config_dir),
+            "child_exports": export_reports,
+        }
 
     print(json.dumps(final_report, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
     print("Done.", flush=True)

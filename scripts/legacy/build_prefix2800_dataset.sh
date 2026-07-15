@@ -11,16 +11,37 @@ RESUME="${RESUME:-0}"
 QUIET="${QUIET:-1}"
 VERBOSE="${VERBOSE:-0}"
 
-HEX_CONFIG="${HEX_CONFIG:-configs/hex_phi_prefix_1200.yaml}"
-SAFECHAIN_PREFIX_CONFIG="${SAFECHAIN_PREFIX_CONFIG:-configs/safechain_prefix_1600.yaml}"
-SAFECHAIN_CONFIG="${SAFECHAIN_CONFIG:-configs/safechain_pilot_1k.yaml}"
-SAFECHAIN_DIR="${SAFECHAIN_DIR:-build/safechain_pilot_1k}"
-HEX_PREFIX_DIR="${HEX_PREFIX_DIR:-build/hex_phi_prefix_1200}"
-SAFECHAIN_PREFIX_DIR="${SAFECHAIN_PREFIX_DIR:-build/safechain_prefix_1600}"
-OUTPUT_DIR="${OUTPUT_DIR:-build/mixed_safechain1k_prefix2800}"
-TRAIN_YAML="${TRAIN_YAML:-train/llamafactory/dataset_safeanywhere_prefix2800_train.yaml}"
-VAL_YAML="${VAL_YAML:-train/llamafactory/dataset_safeanywhere_prefix2800_val.yaml}"
+HEX_CONFIG="${HEX_CONFIG:-configs/data_build/hex_phi_prefix_1200.yaml}"
+SAFECHAIN_PREFIX_CONFIG="${SAFECHAIN_PREFIX_CONFIG:-configs/data_build/safechain_prefix_1600.yaml}"
+SAFECHAIN_CONFIG="${SAFECHAIN_CONFIG:-configs/data_build/safechain_pilot_1k.yaml}"
+SAFECHAIN_DIR="${SAFECHAIN_DIR:-build/data_build/safechain_pilot_1k}"
+HEX_PREFIX_DIR="${HEX_PREFIX_DIR:-build/data_build/hex_phi_prefix_1200}"
+SAFECHAIN_PREFIX_DIR="${SAFECHAIN_PREFIX_DIR:-build/data_build/safechain_prefix_1600}"
+OUTPUT_DIR="${OUTPUT_DIR:-build/data_build/mixed_safechain1k_prefix2800}"
+TRAIN_YAML="${TRAIN_YAML:-configs/sft/llamafactory/dataset_safeanywhere_prefix2800_train.yaml}"
+VAL_YAML="${VAL_YAML:-configs/sft/llamafactory/dataset_safeanywhere_prefix2800_val.yaml}"
 LOG_FILE="${LOG_FILE:-$OUTPUT_DIR/build_prefix2800.log}"
+
+resolve_existing_build_path() {
+  local path="$1"
+  local prefix="$ROOT/build/data_build/"
+  if [[ -e "$path" ]]; then
+    printf '%s\n' "$path"
+    return 0
+  fi
+  if [[ "$path" == "$prefix"* ]]; then
+    local legacy="$ROOT/build/${path#$prefix}"
+    if [[ -e "$legacy" ]]; then
+      printf '%s\n' "$legacy"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$path"
+}
+
+SAFECHAIN_DIR="$(resolve_existing_build_path "$SAFECHAIN_DIR")"
+HEX_PREFIX_DIR="$(resolve_existing_build_path "$HEX_PREFIX_DIR")"
+SAFECHAIN_PREFIX_DIR="$(resolve_existing_build_path "$SAFECHAIN_PREFIX_DIR")"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 if [[ "$VERBOSE" != "1" ]]; then
