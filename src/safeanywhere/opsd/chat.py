@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 
+QWEN3_NOTHINK_STUB = "<think>\n\n</think>\n\n"
+
+
 def _render_qwen3_nothink(messages: list[dict[str, str]], add_generation_prompt: bool = True) -> str:
     chunks: list[str] = []
     for message in messages:
@@ -13,6 +16,7 @@ def _render_qwen3_nothink(messages: list[dict[str, str]], add_generation_prompt:
         chunks.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
     if add_generation_prompt:
         chunks.append("<|im_start|>assistant\n")
+        chunks.append(QWEN3_NOTHINK_STUB)
     return "".join(chunks)
 
 

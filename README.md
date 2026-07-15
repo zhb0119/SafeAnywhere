@@ -80,6 +80,42 @@ USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
 
 如基础模型路径不同，修改 `configs/sft/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1.yaml`。
 
+## OPSD 自蒸馏
+
+安装 OPSD 训练依赖：
+
+```bash
+cd /root/workspace/SafeAnywhere
+uv sync --extra opsd
+```
+
+检查配置和数据：
+
+```bash
+uv run --extra opsd python scripts/opsd/run_opsd.py \
+  --config configs/opsd/safechain_qwen3_0_6b.yaml \
+  --dry-run
+```
+
+修改 `configs/opsd/safechain_qwen3_0_6b.yaml`：
+
+```yaml
+model:
+  path: /path/to/merged_sft_hf_checkpoint
+train:
+  output_dir: runs/opsd/qwen3_safeanywhere_opsd_v1
+```
+
+启动训练：
+
+```bash
+uv run --extra opsd python scripts/opsd/run_opsd.py \
+  --config configs/opsd/safechain_qwen3_0_6b.yaml
+```
+
+默认配置训练 `1000` 个 optimizer steps，输出到 `train.output_dir`。
+更多说明见 `docs/OPSD.md`。
+
 ## 主要产物
 
 ```text

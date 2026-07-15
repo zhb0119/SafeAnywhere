@@ -11,7 +11,7 @@ models:
   base_model: ../models/Qwen3-0.6B
   candidate:
     name: sft
-    adapter: runs/qwen3_safeanywhere_lora_sft_v1
+    adapter: /root/workspace/SafeAnywhere/runs/qwen3_safeanywhere_lora_sft_v1
   baseline:
     name: baseline_sft
     adapter: ""

@@ -8,7 +8,7 @@ seed: 20260715
 chat_template: qwen3_nothink
 
 model:
-  path: runs/qwen3_safeanywhere_merged_sft
+  path: ../models/Qwen3-0.6B
   tokenizer_path:
   adapter_path:
   trust_remote_code: true

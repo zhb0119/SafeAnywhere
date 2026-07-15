@@ -21,6 +21,10 @@ from ....utils.types import Message, ModelInput, Processor, ToolCall
 from ..rendering import RenderingPlugin
 
 
+QWEN3_NOTHINK_STUB = "<think>\n\n</think>\n\n"
+QWEN3_ASSISTANT_NOTHINK_PREFIX = "<|im_start|>assistant\n" + QWEN3_NOTHINK_STUB
+
+
 def _append_model_input(
     processor: Processor,
     input_ids: list[int],
@@ -128,7 +132,7 @@ def render_safeanywhere_qwen3_nothink_messages(
             text = "<|im_start|>" + role + "\n" + _concat_text_content(message) + "<|im_end|>\n"
             _append_model_input(processor, input_ids, labels, loss_weights, text, message.get("loss_weight", 0.0))
         elif role == "assistant":
-            _append_model_input(processor, input_ids, labels, loss_weights, "<|im_start|>assistant\n", 0.0)
+            _append_model_input(processor, input_ids, labels, loss_weights, QWEN3_ASSISTANT_NOTHINK_PREFIX, 0.0)
             has_positive_span = False
             previous_content_type = None
             for content in message["content"]:
@@ -166,7 +170,7 @@ def render_safeanywhere_qwen3_nothink_messages(
     if is_generate:
         if enable_thinking:
             raise ValueError("The safeanywhere_qwen3_nothink template does not support thinking mode.")
-        _append_model_input(processor, input_ids, labels, loss_weights, "<|im_start|>assistant\n", 0.0)
+        _append_model_input(processor, input_ids, labels, loss_weights, QWEN3_ASSISTANT_NOTHINK_PREFIX, 0.0)
 
     return ModelInput(
         input_ids=input_ids,
