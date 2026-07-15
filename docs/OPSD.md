@@ -12,6 +12,7 @@ Supported in v1:
 - One local HF causal LM used as both student and prompt-elicited teacher.
 - Teacher distribution is computed with a label-specific safety system prompt.
 - Loss is computed only on the continuation sampled from the current student.
+- LoRA OPSD by default, with optional full-parameter mode.
 
 Not supported in v1:
 
@@ -66,9 +67,14 @@ uv run python scripts/opsd/run_opsd.py \
 
 Edit `configs/opsd/safechain_qwen3_0_6b.yaml`:
 
-- `model.path`: merged HF checkpoint from the cold-start SFT stage.
+- `model.path`: base HF checkpoint when using `adapter_path`, or a merged SFT
+  checkpoint when `adapter_path` is empty.
+- `model.train_mode`: `lora` or `full`; the default config uses `lora`.
 - `model.tokenizer_path`: optional tokenizer path; defaults to `model.path`.
-- `model.adapter_path`: optional LoRA/PEFT adapter path.
+- `model.adapter_path`: optional LoRA/PEFT adapter path. In `lora` mode this
+  is loaded as trainable, so it can point to the cold-start SFT LoRA adapter.
+- `model.lora`: LoRA rank, alpha, dropout, target modules, and bias settings
+  used when `train_mode: lora` and `adapter_path` is empty.
 - `train.output_dir`: where OPSD checkpoints and logs should be written.
 
 Then run:
@@ -81,7 +87,7 @@ uv run python scripts/opsd/run_opsd.py \
 Outputs:
 
 ```text
-runs/opsd/qwen3_safeanywhere_opsd_v1/
+runs/opsd/qwen3_safeanywhere_opsd_lora_v1/
   resolved_config.json
   train_log.jsonl
   rollout_samples.jsonl

@@ -101,9 +101,11 @@ uv run --extra opsd python scripts/opsd/run_opsd.py \
 
 ```yaml
 model:
-  path: /path/to/merged_sft_hf_checkpoint
+  path: ../models/Qwen3-0.6B
+  adapter_path: runs/qwen3_safeanywhere_lora_sft_v1
+  train_mode: lora
 train:
-  output_dir: runs/opsd/qwen3_safeanywhere_opsd_v1
+  output_dir: runs/opsd/qwen3_safeanywhere_opsd_lora_v1
 ```
 
 启动训练：
@@ -113,7 +115,7 @@ uv run --extra opsd python scripts/opsd/run_opsd.py \
   --config configs/opsd/safechain_qwen3_0_6b.yaml
 ```
 
-默认配置训练 `1000` 个 optimizer steps，输出到 `train.output_dir`。
+默认配置用 LoRA 继续训练 SFT adapter，输出到 `train.output_dir`。
 更多说明见 `docs/OPSD.md`。
 
 ## 主要产物

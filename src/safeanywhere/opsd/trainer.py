@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from collections import Counter
 from contextlib import nullcontext
 from pathlib import Path
@@ -12,6 +13,17 @@ from safeanywhere.opsd.chat import render_prompt
 from safeanywhere.opsd.config import resolve_config_path
 from safeanywhere.opsd.data import PromptItem, SafeChainPromptPool
 from safeanywhere.opsd.prompts import PromptBank
+
+
+DEFAULT_LORA_TARGET_MODULES = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
 
 
 def _require_train_deps() -> tuple[Any, Any, Any]:
@@ -26,14 +38,63 @@ def _require_train_deps() -> tuple[Any, Any, Any]:
     return torch, AutoModelForCausalLM, AutoTokenizer
 
 
-def _load_peft_model_if_needed(model: Any, adapter_path: str | None) -> Any:
-    if not adapter_path:
+def _normalize_string_list(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value == "all":
+            return DEFAULT_LORA_TARGET_MODULES
+        if value == "all-linear":
+            return value
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    raise TypeError(f"Expected string or list, got {type(value).__name__}.")
+
+
+def _prepare_trainable_model(model: Any, model_cfg: dict[str, Any], adapter_path: str | None) -> Any:
+    train_mode = str(model_cfg.get("train_mode", "full")).lower()
+    if train_mode not in {"full", "lora"}:
+        raise ValueError(f"Unsupported OPSD train_mode: {train_mode}")
+
+    if train_mode == "full":
+        if adapter_path:
+            raise ValueError("train_mode=full expects model.path to be a merged checkpoint; use train_mode=lora for adapter_path.")
         return model
+
     try:
-        from peft import PeftModel
+        from peft import LoraConfig, PeftModel, TaskType, get_peft_model
     except ImportError as exc:  # pragma: no cover - depends on optional deps
-        raise RuntimeError("Loading a LoRA/PEFT adapter requires `peft`. Install `uv sync --extra opsd`.") from exc
-    return PeftModel.from_pretrained(model, adapter_path)
+        raise RuntimeError("LoRA OPSD requires `peft`. Install `uv sync --extra opsd`.") from exc
+
+    if adapter_path:
+        return PeftModel.from_pretrained(model, adapter_path, is_trainable=True)
+
+    lora_cfg = model_cfg.get("lora", {}) or {}
+    target_modules = _normalize_string_list(lora_cfg.get("target_modules", DEFAULT_LORA_TARGET_MODULES))
+    modules_to_save = _normalize_string_list(lora_cfg.get("modules_to_save"))
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        r=int(lora_cfg.get("r", 16)),
+        lora_alpha=int(lora_cfg.get("alpha", lora_cfg.get("lora_alpha", 32))),
+        lora_dropout=float(lora_cfg.get("dropout", lora_cfg.get("lora_dropout", 0.05))),
+        target_modules=target_modules,
+        bias=str(lora_cfg.get("bias", "none")),
+        modules_to_save=modules_to_save,
+    )
+    return get_peft_model(model, peft_config)
+
+
+def _parameter_counts(model: Any) -> dict[str, int | float]:
+    total = 0
+    trainable = 0
+    for param in model.parameters():
+        count = param.numel()
+        total += count
+        if param.requires_grad:
+            trainable += count
+    ratio = (trainable / total) if total else 0.0
+    return {"total": total, "trainable": trainable, "trainable_ratio": ratio}
 
 
 class OpsdTrainer:
@@ -119,14 +180,25 @@ class OpsdTrainer:
         adapter_path = model_cfg.get("adapter_path")
         if adapter_path:
             adapter_path = str(resolve_config_path(adapter_path, required=True))
-        model = _load_peft_model_if_needed(model, adapter_path)
+        model = _prepare_trainable_model(model, model_cfg, adapter_path)
         model.to(device)
         if train_cfg.get("gradient_checkpointing"):
+            if hasattr(model, "enable_input_require_grads"):
+                model.enable_input_require_grads()
             model.gradient_checkpointing_enable()
+            if hasattr(model, "config"):
+                model.config.use_cache = False
         model.train()
 
+        trainable_params = [param for param in model.parameters() if param.requires_grad]
+        if not trainable_params:
+            raise RuntimeError("No trainable OPSD parameters. Check model.train_mode and adapter_path.")
+        parameter_counts = _parameter_counts(model)
+        write_json(output_dir / "train_metadata.json", {"parameter_counts": parameter_counts})
+        print(json.dumps({"parameter_counts": parameter_counts}, ensure_ascii=False), flush=True)
+
         optimizer = torch.optim.AdamW(
-            [param for param in model.parameters() if param.requires_grad],
+            trainable_params,
             lr=float(train_cfg.get("learning_rate", 1e-6)),
             weight_decay=float(train_cfg.get("weight_decay", 0.0)),
         )
@@ -142,6 +214,7 @@ class OpsdTrainer:
         save_steps = int(train_cfg.get("save_steps", 100))
         sample_log_steps = int(train_cfg.get("sample_logging_steps", 50))
         sample_log_limit = int(train_cfg.get("sample_logging_limit", 4))
+        progress_log_micro_batches = bool(train_cfg.get("progress_log_micro_batches", True))
         chat_template = str(cfg.get("chat_template", "qwen3_nothink"))
 
         def autocast_ctx() -> Any:
@@ -149,13 +222,44 @@ class OpsdTrainer:
                 return torch.autocast(device_type="cuda", dtype=torch_dtype)
             return nullcontext()
 
+        def should_log_progress(step: int) -> bool:
+            return step == 1 or (log_steps > 0 and step % log_steps == 0)
+
+        print(
+            json.dumps(
+                {
+                    "event": "train_start",
+                    "max_steps": max_steps,
+                    "micro_batch_size": micro_batch_size,
+                    "gradient_accumulation_steps": grad_accum,
+                    "logging_steps": log_steps,
+                    "progress_log_micro_batches": progress_log_micro_batches,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        train_started_at = time.monotonic()
         for step in range(1, max_steps + 1):
+            step_started_at = time.monotonic()
+            log_step_progress = should_log_progress(step)
+            if log_step_progress:
+                print(json.dumps({"event": "step_start", "step": step}, ensure_ascii=False), flush=True)
             optimizer.zero_grad(set_to_none=True)
             step_losses: list[float] = []
             step_labels: Counter[str] = Counter()
             logged_samples: list[dict[str, Any]] = []
 
-            for _ in range(grad_accum):
+            for micro_idx in range(1, grad_accum + 1):
+                micro_started_at = time.monotonic()
+                if progress_log_micro_batches and log_step_progress:
+                    print(
+                        json.dumps(
+                            {"event": "micro_batch_start", "step": step, "micro_batch": micro_idx, "micro_batches": grad_accum},
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
                 batch = pool.sample_batch(micro_batch_size, label_ratios=data_cfg.get("label_ratios"), rng=self.rng)
                 loss, batch_samples, label_counts = self._train_micro_batch(
                     torch=torch,
@@ -173,19 +277,49 @@ class OpsdTrainer:
                     autocast_ctx=autocast_ctx,
                 )
                 if loss is None:
+                    if progress_log_micro_batches and log_step_progress:
+                        print(
+                            json.dumps(
+                                {
+                                    "event": "micro_batch_end",
+                                    "step": step,
+                                    "micro_batch": micro_idx,
+                                    "status": "skipped",
+                                    "elapsed_s": round(time.monotonic() - micro_started_at, 3),
+                                },
+                                ensure_ascii=False,
+                            ),
+                            flush=True,
+                        )
                     continue
                 (loss / grad_accum).backward()
                 step_losses.append(float(loss.detach().cpu()))
                 step_labels.update(label_counts)
                 if len(logged_samples) < sample_log_limit:
                     logged_samples.extend(batch_samples[: sample_log_limit - len(logged_samples)])
+                if progress_log_micro_batches and log_step_progress:
+                    print(
+                        json.dumps(
+                            {
+                                "event": "micro_batch_end",
+                                "step": step,
+                                "micro_batch": micro_idx,
+                                "status": "ok",
+                                "loss": float(loss.detach().cpu()),
+                                "labels": dict(label_counts),
+                                "elapsed_s": round(time.monotonic() - micro_started_at, 3),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
 
             if not step_losses:
                 raise RuntimeError("No valid OPSD samples were produced in this optimizer step.")
 
             max_grad_norm = float(train_cfg.get("max_grad_norm", 1.0))
             if max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
             optimizer.step()
 
             avg_loss = sum(step_losses) / len(step_losses)
@@ -194,6 +328,8 @@ class OpsdTrainer:
                 "loss": avg_loss,
                 "micro_batches": len(step_losses),
                 "labels": dict(step_labels),
+                "step_elapsed_s": round(time.monotonic() - step_started_at, 3),
+                "total_elapsed_s": round(time.monotonic() - train_started_at, 3),
             }
             self._append_jsonl(log_path, log_row)
             if step == 1 or step % log_steps == 0:

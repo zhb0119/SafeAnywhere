@@ -1,8 +1,8 @@
 # SafeAnywhere first-pass prompt-level OPSD.
 #
-# This config assumes `model.path` points to a merged HF checkpoint produced by
-# your cold-start SFT stage. The default path is a placeholder; edit it before
-# running without --dry-run.
+# By default OPSD continues the LoRA adapter produced by the cold-start SFT
+# config. If you use a merged SFT checkpoint instead, set model.path to that
+# checkpoint and leave model.adapter_path empty.
 
 seed: 20260715
 chat_template: qwen3_nothink
@@ -10,7 +10,21 @@ chat_template: qwen3_nothink
 model:
   path: ../models/Qwen3-0.6B
   tokenizer_path:
-  adapter_path:
+  adapter_path: runs/qwen3_safeanywhere_lora_sft_v1
+  train_mode: lora
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    bias: none
   trust_remote_code: true
   dtype: bf16
   device:
@@ -40,16 +54,17 @@ loss:
   top_k:
 
 train:
-  output_dir: runs/opsd/qwen3_safeanywhere_opsd_v1
+  output_dir: runs/opsd/qwen3_safeanywhere_opsd_lora_v1
   micro_batch_size: 1
   gradient_accumulation_steps: 8
-  learning_rate: 1.0e-6
+  learning_rate: 5.0e-5
   weight_decay: 0.0
   max_grad_norm: 1.0
-  max_steps: 300
+  max_steps: 1000
   max_prompt_tokens: 1536
   max_total_tokens: 2048
-  logging_steps: 10
+  logging_steps: 1
+  progress_log_micro_batches: true
   sample_logging_steps: 50
   sample_logging_limit: 1000
   save_steps: 100
