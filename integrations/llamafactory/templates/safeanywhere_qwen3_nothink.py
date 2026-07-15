@@ -91,6 +91,9 @@ def render_safeanywhere_qwen3_nothink_messages(
     assistant turn while allowing the prefill span to be masked and the recovery
     span to receive loss.
     """
+    if enable_thinking:
+        raise ValueError("The safeanywhere_qwen3_nothink template does not support thinking mode.")
+
     input_ids, labels, loss_weights = [], [], []
 
     if tools:
@@ -168,8 +171,6 @@ def render_safeanywhere_qwen3_nothink_messages(
             _append_model_input(processor, input_ids, labels, loss_weights, text, message.get("loss_weight", 0.0))
 
     if is_generate:
-        if enable_thinking:
-            raise ValueError("The safeanywhere_qwen3_nothink template does not support thinking mode.")
         _append_model_input(processor, input_ids, labels, loss_weights, QWEN3_ASSISTANT_NOTHINK_PREFIX, 0.0)
 
     return ModelInput(
