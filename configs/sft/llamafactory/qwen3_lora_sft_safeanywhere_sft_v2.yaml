@@ -1,0 +1,32 @@
+model: ../models/Qwen3-0.6B
+model_class: llm
+trust_remote_code: true
+
+template: safeanywhere_qwen3_nothink
+
+peft_config:
+  name: lora
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: all
+
+kernel_config:
+  name: auto
+  include_kernels: auto
+
+train_dataset: configs/sft/llamafactory/dataset_safeanywhere_sft_v1_train.yaml
+
+output_dir: runs/qwen3_safeanywhere_lora_sft_v2
+micro_batch_size: 1
+global_batch_size: 8
+cutoff_len: 2048
+learning_rate: 7.0e-5
+num_train_epochs: 3
+max_grad_norm: 1.0
+logging_steps: 5
+save_epochs: 1.0
+save_total_limit: 3
+bf16: true
+batching_workers: 0
+seed: 20260706
