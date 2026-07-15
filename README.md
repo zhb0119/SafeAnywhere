@@ -1,36 +1,51 @@
 # SafeAnywhere
 
-SafeAnywhere 用于构建 SFT 数据，重点是让模型在危险前缀下恢复到安全续写。
-当前可复现快照在 `build/data_build/safeanywhere_sft_v1/`。
+SafeAnywhere 构建 safety-think SFT 数据，用于训练模型在危险前缀或越狱式 assistant prefill 后恢复到安全续写。
 
-## 当前快照
+## 数据快照
 
-- `safechain`：1000 条（900 train / 100 val）
-- `harmful_prefix/safechain_harmful`：300 条（270 train / 30 val）
-- 合并后 SFT：1170 train / 130 val
-- LLaMA-Factory 导出：
-  - `build/data_build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl`
-  - `build/data_build/safeanywhere_sft_v1/val_lf_v1_spanmasked.jsonl`
+当前快照：`build/data_build/safeanywhere_sft_v1/`
 
-Mask 约定：
+| 数据 | train | val | total |
+| --- | ---: | ---: | ---: |
+| `safechain` | 900 | 100 | 1000 |
+| `harmful_prefix` | 607 | 67 | 674 |
+| **合并 SFT** | **1507** | **167** | **1674** |
+
+`harmful_prefix` 来源：
+
+- `hex_phi`：600 条
+- `safechain_harmful`：74 条
+
+说明：当前本地 `safechain_harmful/annotations.jsonl` 只有 74 条；配置目标是 300 条。复用已有数据时不会补打 API。
+
+## Loss Mask
 
 - `safechain`：`user=0 / assistant=1`
-- `dangerous_prefix`：`user=0 / assistant_prefill=0 / recovery_target=1`
+- `harmful_prefix`：`user=0 / assistant_prefill=0 / recovery_target=1`
+- LLaMA-Factory 导出使用 content span 的 `loss_weight` 保留上述 mask。
 
-## 环境
+顶层 `harmful_prefix/annotations.jsonl` 和 `harmful_prefix/failed.jsonl` 不保留；原始文件只放在各 source 子目录。
+
+## CLI
+
+安装依赖：
 
 ```bash
 cd /root/workspace/SafeAnywhere
 uv sync --frozen
-cp .env.example .env
 ```
 
-`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 用于 teacher。
-`JUDGE_*` 只在评测时需要。
+复用已有 annotations，重新导出 SFT 和 LLaMA-Factory 数据（不调用 API）：
 
-## 数据构建
+```bash
+uv run python scripts/build_sft_dataset.py \
+  --config configs/data_build/safeanywhere_sft_v1.yaml \
+  --export-existing-only \
+  --quiet
+```
 
-从源数据重新生成当前快照：
+从源数据重建 annotations、SFT 和导出文件（会调用 teacher API）：
 
 ```bash
 uv run python scripts/build_sft_dataset.py \
@@ -39,65 +54,38 @@ uv run python scripts/build_sft_dataset.py \
   --quiet
 ```
 
-如果只想复用当前仓库里已落盘的数据，可直接合并、导出并校验：
+校验 LLaMA-Factory span mask：
 
 ```bash
-python3 scripts/data/merge_sft.py \
-  --safechain-train build/data_build/safeanywhere_sft_v1/safechain/sft_train.jsonl \
-  --safechain-val build/data_build/safeanywhere_sft_v1/safechain/sft_val.jsonl \
-  --prefix-train build/data_build/safeanywhere_sft_v1/harmful_prefix/safechain_harmful/sft_train.jsonl \
-  --prefix-val build/data_build/safeanywhere_sft_v1/harmful_prefix/safechain_harmful/sft_val.jsonl \
-  --output-dir build/data_build/safeanywhere_sft_v1 \
-  --no-strict-counts
-
-python3 scripts/data/export_llamafactory_v1.py \
-  --input-dir build/data_build/safeanywhere_sft_v1 \
-  --output-dir build/data_build/safeanywhere_sft_v1 \
-  --train-dataset-yaml configs/sft/llamafactory/dataset_safeanywhere_sft_v1_train.yaml \
-  --val-dataset-yaml configs/sft/llamafactory/dataset_safeanywhere_sft_v1_val.yaml
-
 python3 scripts/data/validate_llamafactory_masks.py \
   --train build/data_build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl \
   --val build/data_build/safeanywhere_sft_v1/val_lf_v1_spanmasked.jsonl
 ```
 
-当前 `configs/data_build/safeanywhere_sft_v1.yaml` 只构建 `safechain + harmful_prefix/safechain_harmful`。
-如果要做完整 1500 条混合数据，再补建 `harmful_prefix/hex_phi`，并把 `pipeline.finalize` 设为 `true`。
-
 ## SFT
 
-1. 复制 LLaMA-Factory 模板：
+复制 LLaMA-Factory template：
 
 ```bash
 cp integrations/llamafactory/templates/safeanywhere_qwen3_nothink.py \
   /root/workspace/LLaMA-Factory/src/llamafactory/v1/plugins/model_plugins/templates/
 ```
 
-2. 训练：
+启动训练：
 
 ```bash
 USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
   llamafactory-cli sft configs/sft/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1.yaml
 ```
 
-3. 如基础模型路径不同，修改 `configs/sft/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1.yaml` 里的 `model`。
+如基础模型路径不同，修改 `configs/sft/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1.yaml`。
 
-## 评测
-
-```bash
-bash scripts/eval/run_eval_comparison.sh --config configs/eval/safeanywhere_v1.yaml
-```
-
-## 目录
+## 主要产物
 
 ```text
-configs/
-  data_build/
-  sft/llamafactory/
-  eval/
-integrations/llamafactory/templates/
-scripts/
-  data/
-  eval/
-build/data_build/safeanywhere_sft_v1/
+build/data_build/safeanywhere_sft_v1/sft_train.jsonl
+build/data_build/safeanywhere_sft_v1/sft_val.jsonl
+build/data_build/safeanywhere_sft_v1/train_lf_v1_spanmasked.jsonl
+build/data_build/safeanywhere_sft_v1/val_lf_v1_spanmasked.jsonl
+build/data_build/safeanywhere_sft_v1/report.json
 ```

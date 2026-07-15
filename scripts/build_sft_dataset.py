@@ -458,12 +458,20 @@ def build_harmful_prefix_report(
         "dangerous_prefix_masks": count_masks(rows),
         "source_reports": reports,
         "files": {
-            "manifest": repo_relative(output_dir / "manifest.jsonl"),
-            "annotations": repo_relative(output_dir / "annotations.jsonl"),
-            "failed": repo_relative(output_dir / "failed.jsonl") if (output_dir / "failed.jsonl").exists() else None,
+            "manifest": repo_relative(output_dir / "manifest.jsonl") if (output_dir / "manifest.jsonl").exists() else None,
             "sft_train": repo_relative(output_dir / "sft_train.jsonl"),
             "sft_val": repo_relative(output_dir / "sft_val.jsonl"),
             "sources": {source_name: repo_relative(path) for source_name, path in source_dirs.items()},
+            "source_annotations": {
+                source_name: repo_relative(path / "annotations.jsonl")
+                for source_name, path in source_dirs.items()
+                if (path / "annotations.jsonl").exists()
+            },
+            "source_failed": {
+                source_name: repo_relative(path / "failed.jsonl")
+                for source_name, path in source_dirs.items()
+                if (path / "failed.jsonl").exists()
+            },
         },
     }
 
@@ -585,8 +593,8 @@ def assemble_harmful_prefix(harmful_dir: Path, source_dirs: dict[str, Path]) -> 
     ensure_dir(harmful_dir)
     source_paths = list(source_dirs.values())
     combine_jsonl([path / "manifest.jsonl" for path in source_paths], harmful_dir / "manifest.jsonl")
-    combine_jsonl([path / "annotations.jsonl" for path in source_paths], harmful_dir / "annotations.jsonl")
-    combine_jsonl([path / "failed.jsonl" for path in source_paths], harmful_dir / "failed.jsonl", missing_ok=True)
+    (harmful_dir / "annotations.jsonl").unlink(missing_ok=True)
+    (harmful_dir / "failed.jsonl").unlink(missing_ok=True)
     train = combine_jsonl([path / "sft_train.jsonl" for path in source_paths], harmful_dir / "sft_train.jsonl")
     val = combine_jsonl([path / "sft_val.jsonl" for path in source_paths], harmful_dir / "sft_val.jsonl")
     validate_unique_ids(train + val, "harmful_prefix")
@@ -758,6 +766,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true", help="Print child output instead of writing only to build.log.")
     parser.add_argument("--skip-export", action="store_true", help="Skip LLaMA-Factory export.")
     parser.add_argument("--skip-validate", action="store_true", help="Skip exported span-mask validation.")
+    parser.add_argument(
+        "--export-existing-only",
+        action="store_true",
+        help="Only export/merge/validate data that already exists under the configured output_dir; never run teacher builders.",
+    )
     args = parser.parse_args()
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
@@ -787,10 +800,20 @@ def main() -> int:
     if harmful_prefix_sources:
         print(f"Harmful-prefix sources: {harmful_prefix_sources}", flush=True)
     print(f"Finalize mixed dataset: {finalize}", flush=True)
-    dirs = run_builder_steps(config, args, generated_config_dir, log_file, tasks, harmful_prefix_sources)
+    if args.export_existing_only:
+        print("Export existing data only: skip annotation builders", flush=True)
+        dirs = {"safechain": output_dir / "safechain", "harmful_prefix": output_dir / "harmful_prefix"}
+    else:
+        dirs = run_builder_steps(config, args, generated_config_dir, log_file, tasks, harmful_prefix_sources)
+
     export_reports, harmful_report = auto_export_subdatasets(generated_config_dir, output_dir)
     if harmful_report is None and (output_dir / "harmful_prefix" / "report.json").exists():
         harmful_report = load_json(output_dir / "harmful_prefix" / "report.json")
+    if not finalize and not args.export_existing_only:
+        if export_reports:
+            print(json.dumps({"auto_export": export_reports}, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
+        print("Done.", flush=True)
+        return 0
     if harmful_report is None:
         raise RuntimeError("Cannot finalize without harmful_prefix report.")
     final_report = run_merge_export_validate(config, args, dirs, harmful_report, log_file)

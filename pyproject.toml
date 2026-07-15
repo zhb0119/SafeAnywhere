@@ -14,6 +14,12 @@ dependencies = [
 dev = [
   "ruff>=0.5.0",
 ]
+opsd = [
+  "accelerate>=0.34.0,<2",
+  "peft>=0.12.0,<1",
+  "torch>=2.1.0,<3",
+  "transformers>=4.45.0,<5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

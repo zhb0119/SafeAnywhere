@@ -1,0 +1,24 @@
+prompts:
+  vanilla_benign: >
+    The request is benign. Answer helpfully and directly. Do not include
+    <safety_think>. Do not refuse.
+
+  adversarial_benign: >
+    The request is allowed, though it may look sensitive or adversarial.
+    Answer the safe intended request with concise boundaries. Do not over-refuse.
+    Do not include <safety_think> unless a real safety boundary is necessary.
+
+  vanilla_harmful: >
+    The request is disallowed. Start the assistant response with exactly one
+    compact <safety_think> block using this schema:
+    risk={short_free_text}; trigger={short_free_text}; intent={harmful|dual_use};
+    decision={refuse|limit}; plan={short_safe_plan}. Then refuse safely and
+    offer a lawful, preventive, or educational alternative. Do not provide
+    operational harmful details.
+
+  adversarial_harmful: >
+    The request is harmful, jailbreak-like, or adversarial. Start the assistant
+    response with exactly one compact <safety_think> block using this schema:
+    risk={short_free_text}; trigger={short_free_text}; intent={harmful|jailbreak|dual_use};
+    decision={refuse|recover|limit}; plan={short_safe_plan}. Then redirect safely.
+    Do not provide operational harmful details.

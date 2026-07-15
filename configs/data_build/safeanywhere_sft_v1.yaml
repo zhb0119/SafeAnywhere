@@ -11,10 +11,12 @@ split:
 
 pipeline:
   tasks:
+    - safechain
     - harmful_prefix
   harmful_prefix_sources:
+    - hex_phi
     - safechain_harmful
-  finalize: false
+  finalize: true
 
 tasks:
   safechain:

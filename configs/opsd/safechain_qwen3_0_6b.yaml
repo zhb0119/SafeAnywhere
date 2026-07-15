@@ -1,0 +1,56 @@
+# SafeAnywhere first-pass prompt-level OPSD.
+#
+# This config assumes `model.path` points to a merged HF checkpoint produced by
+# your cold-start SFT stage. The default path is a placeholder; edit it before
+# running without --dry-run.
+
+seed: 20260715
+chat_template: qwen3_nothink
+
+model:
+  path: runs/qwen3_safeanywhere_merged_sft
+  tokenizer_path:
+  adapter_path:
+  trust_remote_code: true
+  dtype: bf16
+  device:
+
+teacher_prompts:
+  path: configs/opsd/teacher_prompts_v1.yaml
+
+data:
+  train_jsonl: data/UWNSL__SafeChain__train.jsonl
+  max_samples:
+  label_filter:
+  label_ratios:
+    vanilla_benign: 0.25
+    adversarial_benign: 0.25
+    vanilla_harmful: 0.25
+    adversarial_harmful: 0.25
+
+generation:
+  max_new_tokens: 384
+  temperature: 0.7
+  top_p: 0.9
+
+loss:
+  type: mixed_kl
+  mixed_kl_weight: 0.5
+  temperature: 1.0
+  top_k:
+
+train:
+  output_dir: runs/opsd/qwen3_safeanywhere_opsd_v1
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-6
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  max_steps: 1000
+  max_prompt_tokens: 1536
+  max_total_tokens: 2048
+  logging_steps: 10
+  sample_logging_steps: 50
+  sample_logging_limit: 4
+  save_steps: 100
+  gradient_checkpointing: false
