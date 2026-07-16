@@ -122,8 +122,9 @@ uv run --extra opsd python scripts/sft/add_safety_think_special_tokens.py \
   --base-model ../models/Qwen3-0.6B \
   --output runs/sft_special/qwen3_0_6b_safety_think_base
 
-USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
-  llamafactory-cli sft configs/sft/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1_special_tokens.yaml
+PYTHONPATH=/root/workspace/SafeAnywhere/src:/root/workspace/LLaMA-Factory/src USE_V1=1 \
+  python scripts/sft/run_special_sft.py \
+  configs/sft/llamafactory/qwen3_lora_sft_safeanywhere_sft_v1_special_tokens.yaml
 ```
 
 输出：
@@ -132,6 +133,13 @@ USE_V1=1 PYTHONPATH=/root/workspace/LLaMA-Factory/src \
 runs/sft_special/qwen3_0_6b_safety_think_base/
 runs/sft_special/qwen3_0_6b_v1/
 ```
+
+special-token SFT 必须使用 `scripts/sft/run_special_sft.py`。配置会通过
+`modules_to_save` 保存 `embed_tokens` 和 `lm_head`，同时安装 sparse-row
+gradient hook，只允许 `<safety_think>` 和 `</safety_think>` 两个新增 token
+行接收梯度；训练日志里的 trainable 参数比例仍会包含整张可保存模块。若旧
+adapter 的 `adapter_config.json` 中 `modules_to_save` 为 `null`，需要重新跑
+这一分支。
 
 ## 3. Merge
 
@@ -184,6 +192,7 @@ uv run --extra opsd python scripts/eval/run_eval_matrix.py \
 
 ## Notes
 
-- `scripts/sft/add_safety_think_special_tokens.py` 会将 `<safety_think>` 和 `</safety_think>` 注册为 special tokens，并 resize embedding。
+- `scripts/sft/add_safety_think_special_tokens.py` 会将 `<safety_think>` 和 `</safety_think>` 注册为 special tokens，resize embedding，并按 semantic/functional embedding 混合初始化新增 token 行。
+- special-token SFT/OPSD 的 LoRA adapter 会保存 `embed_tokens` 和 `lm_head`，体积会明显大于普通 LoRA；实际 embedding/lm_head 更新由 sparse hook 限制在两个新增 token 行。
 - special-token 分支后续 merge/OPSD 必须使用 `runs/sft_special/qwen3_0_6b_safety_think_base` 或其 merged checkpoint，不能混用原始 base。
 - OPSD 细节见 `docs/OPSD.md`。

@@ -56,11 +56,15 @@ generation:
   top_p: 0.9
 
 loss:
-  type: forward_kl
-  mixed_kl_weight: 0.5
+  type: adaptive_kl
   temperature: 1.0
   top_k:
   max_tokens: 128
+  adaptive_kl:
+    harmful_entropy_low: 0.2
+    harmful_entropy_high: 0.5
+    harmful_forward_floor: 0.2
+    harmful_reverse_floor: 0.2
   structure:
     enabled: true
     tag_search_tokens: 64

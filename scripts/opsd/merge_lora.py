@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SAFETY_SPECIAL_TOKEN_METADATA = "safeanywhere_special_tokens.json"
+SAFETY_SPECIAL_TOKENS = ("<safety_think>", "</safety_think>")
 
 
 def resolve_path(value: str | Path) -> Path:
@@ -33,6 +36,47 @@ def dtype_from_name(torch: Any, name: str) -> Any:
         raise ValueError(f"Unsupported dtype: {name}") from exc
 
 
+def load_safeanywhere_special_tokens(base_model: Path) -> list[str]:
+    metadata_path = base_model / SAFETY_SPECIAL_TOKEN_METADATA
+    if not metadata_path.exists():
+        return []
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    tokens = metadata.get("tokens")
+    if isinstance(tokens, dict):
+        return [str(token) for token in tokens.keys()]
+    if isinstance(tokens, list):
+        return [str(token) for token in tokens]
+    return list(SAFETY_SPECIAL_TOKENS)
+
+
+def refresh_special_tokens(tokenizer: Any, tokens: list[str], added_token_cls: Any) -> None:
+    if not tokens:
+        return
+
+    token_objects = [
+        added_token_cls(token, lstrip=False, rstrip=False, special=True, normalized=False)
+        for token in tokens
+    ]
+    try:
+        tokenizer.add_special_tokens(
+            {"additional_special_tokens": token_objects},
+            replace_additional_special_tokens=False,
+        )
+    except TypeError:
+        tokenizer.add_special_tokens({"additional_special_tokens": token_objects})
+
+    unk_token_id = getattr(tokenizer, "unk_token_id", None)
+    for token in tokens:
+        token_id = tokenizer.convert_tokens_to_ids(token)
+        if token_id is None or token_id == unk_token_id:
+            raise ValueError(f"Special token {token!r} is missing from tokenizer.")
+
+        encoded = tokenizer.encode(token, add_special_tokens=False)
+        if encoded != [token_id]:
+            raise ValueError(f"Special token {token!r} should encode as one id, got {encoded}.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Merge a LoRA adapter into a local HF causal LM checkpoint.")
     parser.add_argument("--base-model", required=True, help="Base HF model path.")
@@ -47,7 +91,7 @@ def main() -> int:
     try:
         import torch
         from peft import PeftModel
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AddedToken, AutoModelForCausalLM, AutoTokenizer
     except ImportError as exc:
         raise RuntimeError("Merging LoRA requires torch, transformers, and peft. Install `uv sync --extra opsd`.") from exc
 
@@ -64,6 +108,7 @@ def main() -> int:
             raise FileExistsError(f"Output already exists and is not empty: {output}. Use --overwrite.")
         shutil.rmtree(output)
 
+    special_tokens = load_safeanywhere_special_tokens(base_model)
     tokenizer_source = adapter if (adapter / "tokenizer_config.json").exists() else base_model
     try:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=args.trust_remote_code)
@@ -76,6 +121,8 @@ def main() -> int:
             flush=True,
         )
         tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=args.trust_remote_code)
+    refresh_special_tokens(tokenizer, special_tokens, AddedToken)
+
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         torch_dtype=dtype_from_name(torch, args.dtype),
@@ -88,6 +135,14 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output, safe_serialization=True)
     tokenizer.save_pretrained(output)
+    if special_tokens:
+        # Qwen slow tokenizers can keep token ids in tokenizer.json while losing
+        # the high-level special-token state after save/load.  Reload, refresh,
+        # and save once more so downstream OPSD/eval sees the intended state.
+        tokenizer = AutoTokenizer.from_pretrained(output, trust_remote_code=args.trust_remote_code)
+        refresh_special_tokens(tokenizer, special_tokens, AddedToken)
+        tokenizer.save_pretrained(output)
+        shutil.copy2(base_model / SAFETY_SPECIAL_TOKEN_METADATA, output / SAFETY_SPECIAL_TOKEN_METADATA)
     print(output)
     return 0
 

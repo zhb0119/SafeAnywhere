@@ -32,7 +32,7 @@ Default training output layout:
 ```text
 runs/
   sft/          LLaMA-Factory SFT LoRA adapters.
-  sft_special/ Special-token base checkpoint and SFT LoRA adapters.
+  sft_special/ Special-token base checkpoint and sparse-row SFT LoRA adapters.
   merged/       Merged HF checkpoints used as OPSD bases.
   opsd/         OPSD LoRA checkpoints and logs.
 ```

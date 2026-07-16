@@ -16,14 +16,10 @@ models:
       kind: lora
       base_model: ../models/Qwen3-0.6B
       adapter: runs/sft/qwen3_0_6b_v1
-    - name: opsd_step100
+    - name: sft_special
       kind: lora
-      base_model: runs/merged/qwen3_0_6b_sft_v1
-      adapter: runs/opsd/qwen3_0_6b_opsd_v1/checkpoint-step-100
-    - name: opsd_step300
-      kind: lora
-      base_model: runs/merged/qwen3_0_6b_sft_v1
-      adapter: runs/opsd/qwen3_0_6b_opsd_v1/checkpoint-step-300
+      base_model: runs/sft_special/qwen3_0_6b_safety_think_base
+      adapter: runs/sft_special/qwen3_0_6b_v1
 
 compare:
   reference: base
@@ -31,14 +27,13 @@ compare:
 eval_set:
   include_prefix_direct: true
   sampling:
-    # Empty/null means full eval. Set this for a quick balanced smoke test,
-    # e.g. max_per_task: 5.
+    # Empty/null means full eval unless per-task limits are set.
     max_per_task:
     # Per-task limits override max_per_task when set.
     per_task:
       benign_utility: 40
       over_refusal: 40
-      harmful_direct: 40 
+      harmful_direct: 40
       prefix_recovery: 40
 
 generation:

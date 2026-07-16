@@ -6,7 +6,7 @@ stage:
 ```text
 runs/
   sft/          Cold-start SFT LoRA adapters.
-  sft_special/ Special-token base checkpoints and SFT LoRA adapters.
+  sft_special/ Special-token base checkpoints and sparse-row SFT LoRA adapters.
   merged/       Merged HF checkpoints used as downstream bases.
   opsd/         OPSD LoRA adapters, checkpoints, and logs.
 ```

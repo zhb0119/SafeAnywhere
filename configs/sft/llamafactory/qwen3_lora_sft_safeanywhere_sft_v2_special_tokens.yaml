@@ -11,15 +11,9 @@ peft_config:
   lora_alpha: 32
   lora_dropout: 0.05
   target_modules: all
-  # Required for newly added safety-think tokens.  Without saving these
-  # modules, the LoRA adapter cannot carry trained logits/embeddings for the
-  # new token ids into merge/OPSD.
   modules_to_save:
     - embed_tokens
     - lm_head
-  # Used by scripts/sft/run_special_sft.py.  modules_to_save keeps these
-  # tensors exportable, while the sparse hook restricts actual gradients to
-  # the two new token rows, matching the Think-Anywhere cold-start setup.
   ensure_weight_tying: true
   sparse_token_grad:
     enabled: true
@@ -30,6 +24,15 @@ peft_config:
     modules:
       - embed_tokens
       - lm_head
+  safeanywhere_boundary_loss:
+    enabled: true
+    open_weight: 40.0
+    close_weight: 8.0
+    block_weight: 2.0
+    tokens:
+      open: <safety_think>
+      close: </safety_think>
+  bias: none
 
 kernel_config:
   name: auto
@@ -37,14 +40,16 @@ kernel_config:
 
 train_dataset: configs/sft/llamafactory/dataset_safeanywhere_sft_v1_train.yaml
 
-output_dir: runs/sft_special/qwen3_0_6b_v1
+output_dir: runs/sft_special/qwen3_0_6b_v2
 micro_batch_size: 1
 global_batch_size: 8
 cutoff_len: 2048
 learning_rate: 1.0e-4
-num_train_epochs: 3
+num_train_epochs: 6
+max_grad_norm: 1.0
 logging_steps: 5
 save_epochs: 1.0
+save_total_limit: 3
 bf16: true
 batching_workers: 0
 seed: 20260706

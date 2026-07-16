@@ -94,6 +94,15 @@ def truncate_at_stop(text: str) -> str:
     return text[:end].strip()
 
 
+def root_error_message(exc: BaseException) -> str:
+    root = exc
+    while getattr(root, "__context__", None) is not None:
+        root = root.__context__  # type: ignore[assignment]
+    text = str(root).strip().splitlines()
+    detail = text[0] if text else repr(root)
+    return f"{root.__class__.__name__}: {detail}"
+
+
 def load_model(base_model: str, adapter: str | None, dtype: str, device_map: str, trust_remote_code: bool):
     try:
         import torch
@@ -104,7 +113,18 @@ def load_model(base_model: str, adapter: str | None, dtype: str, device_map: str
         ) from exc
 
     tokenizer_path = adapter if adapter and Path(adapter).exists() else base_model
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=trust_remote_code)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=trust_remote_code)
+    except Exception as exc:
+        if tokenizer_path == base_model:
+            raise
+        print(
+            f"Warning: failed to load tokenizer from adapter {tokenizer_path!r}: {root_error_message(exc)}. "
+            f"Falling back to base tokenizer {base_model!r}.",
+            file=sys.stderr,
+            flush=True,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=trust_remote_code)
     if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
         tokenizer.pad_token = tokenizer.eos_token
 

@@ -18,7 +18,7 @@ eval/       Custom eval set building, generation, LLM judge scoring, reports.
 external/   External benchmark preparation and generation helpers.
 legacy/     Historical one-off workflows kept for reproducibility.
 opsd/       Prompt-level OPSD training and LoRA merge helpers.
-sft/        Cold-start SFT utilities, including safety-think special-token base creation.
+sft/        Cold-start SFT utilities, including safety-think special-token base creation and sparse-row SFT.
 utils/      Small utility CLIs.
 ```
 

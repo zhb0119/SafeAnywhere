@@ -92,8 +92,12 @@ def ensure_single_special_token(tokenizer: Any, token: str) -> int:
     if encoded != [token_id]:
         raise ValueError(f"{token!r} should encode as one token, got ids={encoded}")
 
-    if token not in tokenizer.all_special_tokens:
-        raise ValueError(f"{token!r} is not registered as a special token")
+    # Qwen slow tokenizers may not report added special tokens through
+    # all_special_tokens after reload, even when tokenizer.json marks them as
+    # special.  The stable downstream contract is: one lexical id, and skipped
+    # by decode(skip_special_tokens=True).
+    if tokenizer.decode(encoded, skip_special_tokens=True):
+        raise ValueError(f"{token!r} is not skipped by decode(skip_special_tokens=True)")
 
     return int(token_id)
 
@@ -219,13 +223,28 @@ def main() -> int:
             "functional_tokens": functional_pieces,
             "semantic_weight": semantic_weight,
             "functional_weight": functional_weight,
-            "is_special": token in tokenizer.all_special_tokens,
+            "skip_decode_empty": tokenizer.decode([token_id], skip_special_tokens=True) == "",
             "encoded": tokenizer.encode(token, add_special_tokens=False),
         }
 
     output.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output, safe_serialization=True)
     tokenizer.save_pretrained(output)
+
+    # Qwen slow tokenizers can save the added-token ids correctly while losing
+    # the high-level special-token state on reload.  Refresh after the first
+    # save so every downstream step observes these markers as special tokens.
+    tokenizer = AutoTokenizer.from_pretrained(
+        output,
+        trust_remote_code=args.trust_remote_code,
+        use_fast=args.use_fast,
+        padding_side="right",
+    )
+    add_safety_think_special_tokens(tokenizer, token_objects)
+    for token in SPECIAL_TOKENS:
+        ensure_single_special_token(tokenizer, token)
+    tokenizer.save_pretrained(output)
+
     metadata = {
         "base_model": str(base_model),
         "output": str(output),
@@ -234,6 +253,7 @@ def main() -> int:
         "num_added": num_added,
         "old_special_tokens": old_special_tokens,
         "new_special_tokens": list(tokenizer.all_special_tokens),
+        "special_token_contract": "single token id and decode(skip_special_tokens=True) removes the marker",
         "tokens": token_metadata,
     }
     (output / "safeanywhere_special_tokens.json").write_text(

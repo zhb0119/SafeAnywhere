@@ -65,25 +65,54 @@ def _prepare_trainable_model(model: Any, model_cfg: dict[str, Any], adapter_path
 
     try:
         from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+        from transformers import AutoTokenizer
     except ImportError as exc:  # pragma: no cover - depends on optional deps
         raise RuntimeError("LoRA OPSD requires `peft`. Install `uv sync --extra opsd`.") from exc
 
-    if adapter_path:
-        return PeftModel.from_pretrained(model, adapter_path, is_trainable=True)
-
     lora_cfg = model_cfg.get("lora", {}) or {}
-    target_modules = _normalize_string_list(lora_cfg.get("target_modules", DEFAULT_LORA_TARGET_MODULES))
-    modules_to_save = _normalize_string_list(lora_cfg.get("modules_to_save"))
-    peft_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=int(lora_cfg.get("r", 16)),
-        lora_alpha=int(lora_cfg.get("alpha", lora_cfg.get("lora_alpha", 32))),
-        lora_dropout=float(lora_cfg.get("dropout", lora_cfg.get("lora_dropout", 0.05))),
-        target_modules=target_modules,
-        bias=str(lora_cfg.get("bias", "none")),
-        modules_to_save=modules_to_save,
-    )
-    return get_peft_model(model, peft_config)
+    if adapter_path:
+        model = PeftModel.from_pretrained(model, adapter_path, is_trainable=True)
+    else:
+        target_modules = _normalize_string_list(lora_cfg.get("target_modules", DEFAULT_LORA_TARGET_MODULES))
+        modules_to_save = _normalize_string_list(lora_cfg.get("modules_to_save"))
+        peft_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=int(lora_cfg.get("r", 16)),
+            lora_alpha=int(lora_cfg.get("alpha", lora_cfg.get("lora_alpha", 32))),
+            lora_dropout=float(lora_cfg.get("dropout", lora_cfg.get("lora_dropout", 0.05))),
+            target_modules=target_modules,
+            bias=str(lora_cfg.get("bias", "none")),
+            modules_to_save=modules_to_save,
+            ensure_weight_tying=bool(lora_cfg.get("ensure_weight_tying", False)),
+        )
+        model = get_peft_model(model, peft_config)
+
+    sparse_cfg = lora_cfg.get("sparse_token_grad") or {}
+    if bool(sparse_cfg.get("enabled", False)):
+        from safeanywhere.sft.sparse_special_tokens import (
+            apply_sparse_token_gradient_hooks,
+            resolve_sparse_token_ids,
+        )
+
+        token_ids = resolve_sparse_token_ids(model, sparse_cfg, AutoTokenizer)
+        hook_count = apply_sparse_token_gradient_hooks(
+            model,
+            token_ids=token_ids,
+            module_names=sparse_cfg.get("modules"),
+        )
+        print(
+            json.dumps(
+                {
+                    "event": "sparse_special_token_gradient_hook",
+                    "token_ids": token_ids,
+                    "hooked_parameters": hook_count,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+
+    return model
 
 
 def _parameter_counts(model: Any) -> dict[str, int | float]:
@@ -482,6 +511,8 @@ class OpsdTrainer:
                 temperature=float(loss_cfg.get("temperature", 1.0)),
                 top_k=loss_cfg.get("top_k"),
                 token_weights=token_weights_tensor,
+                label=item.label,
+                adaptive_cfg=loss_cfg.get("adaptive_kl", {}) or {},
             )
             prefix_ce_cfg = loss_cfg.get("prefix_ce", {}) or {}
             if bool(prefix_ce_cfg.get("enabled", True)) and bool(structure_info.get("needs_prefix_ce", False)):

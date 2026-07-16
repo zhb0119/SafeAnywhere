@@ -26,6 +26,19 @@ model:
       - gate_proj
       - up_proj
       - down_proj
+    modules_to_save:
+      - embed_tokens
+      - lm_head
+    ensure_weight_tying: true
+    sparse_token_grad:
+      enabled: true
+      tokenizer_path: runs/merged/qwen3_0_6b_sft_special_v1
+      tokens:
+        - <safety_think>
+        - </safety_think>
+      modules:
+        - embed_tokens
+        - lm_head
     bias: none
   trust_remote_code: true
   dtype: bf16
@@ -55,11 +68,15 @@ generation:
   top_p: 0.9
 
 loss:
-  type: forward_kl
-  mixed_kl_weight: 0.5
+  type: adaptive_kl
   temperature: 1.0
   top_k:
   max_tokens: 128
+  adaptive_kl:
+    harmful_entropy_low: 0.2
+    harmful_entropy_high: 0.5
+    harmful_forward_floor: 0.2
+    harmful_reverse_floor: 0.2
   structure:
     enabled: true
     tag_search_tokens: 64
@@ -81,13 +98,13 @@ loss:
     max_tokens: 48
 
 train:
-  output_dir: runs/opsd/qwen3_0_6b_opsd_special_v1
+  output_dir: runs/opsd/qwen3_0_6b_opsd_special_v2
   micro_batch_size: 1
   gradient_accumulation_steps: 8
   learning_rate: 1.0e-5
   weight_decay: 0.0
   max_grad_norm: 1.0
-  max_steps: 1000
+  max_steps: 300
   max_prompt_tokens: 1536
   max_total_tokens: 2048
   logging_steps: 1
