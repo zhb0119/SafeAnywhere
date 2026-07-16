@@ -13,6 +13,7 @@ from safeanywhere.opsd.chat import render_prompt
 from safeanywhere.opsd.config import resolve_config_path
 from safeanywhere.opsd.data import PromptItem, SafeChainPromptPool
 from safeanywhere.opsd.prompts import PromptBank
+from safeanywhere.opsd.structure import build_token_weights, canonical_safety_prefix
 
 
 DEFAULT_LORA_TARGET_MODULES = [
@@ -97,6 +98,13 @@ def _parameter_counts(model: Any) -> dict[str, int | float]:
     return {"total": total, "trainable": trainable, "trainable_ratio": ratio}
 
 
+def _freeze_model(model: Any) -> Any:
+    for param in model.parameters():
+        param.requires_grad_(False)
+    model.eval()
+    return model
+
+
 class OpsdTrainer:
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -133,6 +141,7 @@ class OpsdTrainer:
 
         cfg = self.config
         model_cfg = cfg["model"]
+        teacher_model_cfg = cfg.get("teacher_model", {}) or {}
         data_cfg = cfg["data"]
         train_cfg = cfg["train"]
         gen_cfg = cfg.get("generation", {})
@@ -182,6 +191,20 @@ class OpsdTrainer:
             adapter_path = str(resolve_config_path(adapter_path, required=True))
         model = _prepare_trainable_model(model, model_cfg, adapter_path)
         model.to(device)
+
+        teacher_model_path = str(resolve_config_path(teacher_model_cfg.get("path") or model_path, required=True))
+        teacher_dtype_name = str(teacher_model_cfg.get("dtype", dtype_name)).lower()
+        teacher_torch_dtype = dtype_map.get(teacher_dtype_name, torch_dtype)
+        if device == "cpu":
+            teacher_torch_dtype = torch.float32
+        teacher_model = AutoModelForCausalLM.from_pretrained(
+            teacher_model_path,
+            torch_dtype=teacher_torch_dtype,
+            trust_remote_code=bool(teacher_model_cfg.get("trust_remote_code", model_cfg.get("trust_remote_code", True))),
+        )
+        teacher_model.to(device)
+        teacher_model = _freeze_model(teacher_model)
+
         if train_cfg.get("gradient_checkpointing"):
             if hasattr(model, "enable_input_require_grads"):
                 model.enable_input_require_grads()
@@ -194,7 +217,10 @@ class OpsdTrainer:
         if not trainable_params:
             raise RuntimeError("No trainable OPSD parameters. Check model.train_mode and adapter_path.")
         parameter_counts = _parameter_counts(model)
-        write_json(output_dir / "train_metadata.json", {"parameter_counts": parameter_counts})
+        write_json(
+            output_dir / "train_metadata.json",
+            {"parameter_counts": parameter_counts, "teacher_model_path": teacher_model_path},
+        )
         print(json.dumps({"parameter_counts": parameter_counts}, ensure_ascii=False), flush=True)
 
         optimizer = torch.optim.AdamW(
@@ -264,6 +290,7 @@ class OpsdTrainer:
                 loss, batch_samples, label_counts = self._train_micro_batch(
                     torch=torch,
                     model=model,
+                    teacher_model=teacher_model,
                     tokenizer=tokenizer,
                     prompt_bank=prompt_bank,
                     batch=batch,
@@ -347,6 +374,7 @@ class OpsdTrainer:
         *,
         torch: Any,
         model: Any,
+        teacher_model: Any,
         tokenizer: Any,
         prompt_bank: PromptBank,
         batch: list[PromptItem],
@@ -398,8 +426,12 @@ class OpsdTrainer:
                 eos_token_id=tokenizer.eos_token_id,
                 pad_token_id=tokenizer.pad_token_id,
             )
-            if not continuation_ids:
+            generated_continuation_ids = continuation_ids
+            if not generated_continuation_ids:
                 continue
+            loss_max_tokens = int(loss_cfg.get("max_tokens") or 0)
+            if loss_max_tokens > 0:
+                continuation_ids = generated_continuation_ids[:loss_max_tokens]
 
             teacher_prompt = render_prompt(
                 tokenizer,
@@ -418,10 +450,10 @@ class OpsdTrainer:
             student_input_ids = torch.tensor([student_prompt_ids + continuation_ids], dtype=torch.long, device=device)
             teacher_input_ids = torch.tensor([teacher_prompt_ids + continuation_ids], dtype=torch.long, device=device)
 
-            model.eval()
+            teacher_model.eval()
             with torch.no_grad():
                 with autocast_ctx():
-                    teacher_logits_full = model(teacher_input_ids).logits[0]
+                    teacher_logits_full = teacher_model(teacher_input_ids).logits[0]
             model.train()
             with autocast_ctx():
                 student_logits_full = model(student_input_ids).logits[0]
@@ -431,6 +463,17 @@ class OpsdTrainer:
             length = len(continuation_ids)
             student_logits = student_logits_full[s_start : s_start + length]
             teacher_logits = teacher_logits_full[t_start : t_start + length]
+
+            generated_text = tokenizer.decode(generated_continuation_ids, skip_special_tokens=False)
+            structure_cfg = loss_cfg.get("structure", {}) or {}
+            token_weights, structure_info = build_token_weights(
+                tokenizer=tokenizer,
+                label=item.label,
+                continuation_ids=continuation_ids,
+                generated_text=generated_text,
+                cfg=structure_cfg,
+            )
+            token_weights_tensor = torch.tensor(token_weights, dtype=torch.float32, device=device)
             loss = distillation_kl(
                 student_logits,
                 teacher_logits,
@@ -438,7 +481,21 @@ class OpsdTrainer:
                 mixed_kl_weight=float(loss_cfg.get("mixed_kl_weight", 0.5)),
                 temperature=float(loss_cfg.get("temperature", 1.0)),
                 top_k=loss_cfg.get("top_k"),
+                token_weights=token_weights_tensor,
             )
+            prefix_ce_cfg = loss_cfg.get("prefix_ce", {}) or {}
+            if bool(prefix_ce_cfg.get("enabled", True)) and bool(structure_info.get("needs_prefix_ce", False)):
+                prefix_loss = self._prefix_ce_loss(
+                    torch=torch,
+                    model=model,
+                    tokenizer=tokenizer,
+                    student_prompt_ids=student_prompt_ids,
+                    label=item.label,
+                    device=device,
+                    autocast_ctx=autocast_ctx,
+                    max_tokens=int(prefix_ce_cfg.get("max_tokens", 48)),
+                )
+                loss = loss + float(prefix_ce_cfg.get("weight", 0.5)) * prefix_loss
             losses.append(loss)
             labels[item.label] += 1
             sample_logs.append(
@@ -446,14 +503,42 @@ class OpsdTrainer:
                     "id": item.id,
                     "label": item.label,
                     "instruction": item.instruction,
-                    "student_response": tokenizer.decode(continuation_ids, skip_special_tokens=False),
-                    "continuation_tokens": len(continuation_ids),
+                    "student_response": generated_text,
+                    "continuation_tokens": len(generated_continuation_ids),
+                    "loss_tokens": len(continuation_ids),
+                    "structure": structure_info,
                 }
             )
 
         if not losses:
             return None, sample_logs, labels
         return torch.stack(losses).mean(), sample_logs, labels
+
+    @staticmethod
+    def _prefix_ce_loss(
+        *,
+        torch: Any,
+        model: Any,
+        tokenizer: Any,
+        student_prompt_ids: list[int],
+        label: str,
+        device: str,
+        autocast_ctx: Any,
+        max_tokens: int,
+    ) -> Any:
+        target_ids = tokenizer.encode(canonical_safety_prefix(label), add_special_tokens=False)
+        if max_tokens > 0:
+            target_ids = target_ids[:max_tokens]
+        if not target_ids:
+            return torch.tensor(0.0, device=device)
+
+        input_ids = torch.tensor([student_prompt_ids + target_ids], dtype=torch.long, device=device)
+        target = torch.tensor(target_ids, dtype=torch.long, device=device)
+        with autocast_ctx():
+            logits = model(input_ids).logits[0]
+        start = len(student_prompt_ids) - 1
+        prefix_logits = logits[start : start + len(target_ids)]
+        return torch.nn.functional.cross_entropy(prefix_logits.float(), target, reduction="mean")
 
     @staticmethod
     def _trim_continuation(ids: list[int], *, eos_token_id: int | None, pad_token_id: int | None) -> list[int]:

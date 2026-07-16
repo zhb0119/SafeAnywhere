@@ -65,14 +65,17 @@ uv run python scripts/opsd/run_opsd.py \
 
 ## Training
 
-Edit `configs/opsd/safechain_qwen3_0_6b.yaml`:
+The standard OPSD config starts from `runs/merged/qwen3_0_6b_sft_v1` and writes
+checkpoints to `runs/opsd/qwen3_0_6b_opsd_v1`.
 
-- `model.path`: base HF checkpoint when using `adapter_path`, or a merged SFT
-  checkpoint when `adapter_path` is empty.
+Edit `configs/opsd/safechain_qwen3_0_6b.yaml` when paths or hyperparameters
+need to change:
+
+- `model.path`: merged cold-start SFT checkpoint by default.
 - `model.train_mode`: `lora` or `full`; the default config uses `lora`.
 - `model.tokenizer_path`: optional tokenizer path; defaults to `model.path`.
-- `model.adapter_path`: optional LoRA/PEFT adapter path. In `lora` mode this
-  is loaded as trainable, so it can point to the cold-start SFT LoRA adapter.
+- `model.adapter_path`: optional LoRA/PEFT adapter path. Leave it empty when
+  `model.path` is already the merged cold-start checkpoint.
 - `model.lora`: LoRA rank, alpha, dropout, target modules, and bias settings
   used when `train_mode: lora` and `adapter_path` is empty.
 - `train.output_dir`: where OPSD checkpoints and logs should be written.
@@ -84,15 +87,26 @@ uv run python scripts/opsd/run_opsd.py \
   --config configs/opsd/safechain_qwen3_0_6b.yaml
 ```
 
+For the special-token branch, first build and merge the special-token SFT
+checkpoint, then run:
+
+```bash
+uv run python scripts/opsd/run_opsd.py \
+  --config configs/opsd/safechain_qwen3_0_6b_special_tokens.yaml
+```
+
 Outputs:
 
 ```text
-runs/opsd/qwen3_safeanywhere_opsd_lora_v1/
+runs/opsd/qwen3_0_6b_opsd_v1/
   resolved_config.json
   train_log.jsonl
   rollout_samples.jsonl
   checkpoint-step-*/
   checkpoint-final/
+
+runs/opsd/qwen3_0_6b_opsd_special_v1/
+  ...
 ```
 
 ## Notes

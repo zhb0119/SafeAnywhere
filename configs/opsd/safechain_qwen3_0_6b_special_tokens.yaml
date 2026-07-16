@@ -1,17 +1,16 @@
-# SafeAnywhere first-pass prompt-level OPSD.
+# SafeAnywhere special-token OPSD.
 #
-# By default OPSD starts from the merged cold-start SFT checkpoint and trains a
-# fresh OPSD LoRA adapter. Build the merged checkpoint with:
+# This branch starts from the merged special-token cold-start SFT checkpoint:
 #   uv run --extra opsd python scripts/opsd/merge_lora.py \
-#     --base-model ../models/Qwen3-0.6B \
-#     --adapter runs/sft/qwen3_0_6b_v1 \
-#     --output runs/merged/qwen3_0_6b_sft_v1
+#     --base-model runs/sft_special/qwen3_0_6b_safety_think_base \
+#     --adapter runs/sft_special/qwen3_0_6b_v1 \
+#     --output runs/merged/qwen3_0_6b_sft_special_v1
 
 seed: 20260715
 chat_template: qwen3_nothink
 
 model:
-  path: runs/merged/qwen3_0_6b_sft_v1
+  path: runs/merged/qwen3_0_6b_sft_special_v1
   tokenizer_path:
   adapter_path:
   train_mode: lora
@@ -33,7 +32,7 @@ model:
   device:
 
 teacher_model:
-  path: runs/merged/qwen3_0_6b_sft_v1
+  path: runs/merged/qwen3_0_6b_sft_special_v1
   trust_remote_code: true
   dtype: bf16
 
@@ -82,7 +81,7 @@ loss:
     max_tokens: 48
 
 train:
-  output_dir: runs/opsd/qwen3_0_6b_opsd_v1
+  output_dir: runs/opsd/qwen3_0_6b_opsd_special_v1
   micro_batch_size: 1
   gradient_accumulation_steps: 8
   learning_rate: 1.0e-5

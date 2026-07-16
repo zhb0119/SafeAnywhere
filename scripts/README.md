@@ -17,6 +17,8 @@ data/       Dataset construction, merge, LLaMA-Factory export, mask validation.
 eval/       Custom eval set building, generation, LLM judge scoring, reports.
 external/   External benchmark preparation and generation helpers.
 legacy/     Historical one-off workflows kept for reproducibility.
+opsd/       Prompt-level OPSD training and LoRA merge helpers.
+sft/        Cold-start SFT utilities, including safety-think special-token base creation.
 utils/      Small utility CLIs.
 ```
 

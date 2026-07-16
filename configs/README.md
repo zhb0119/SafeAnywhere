@@ -6,6 +6,7 @@ This directory is the canonical entry point for reproducible runs.
 configs/
   data_build/          Dataset construction configs.
   sft/llamafactory/    LLaMA-Factory dataset and SFT training configs.
+  opsd/                OPSD self-distillation configs.
   eval/                SafeAnywhere evaluation configs.
 ```
 
@@ -24,4 +25,14 @@ build/data_build/eval/<name>/
     base/
     sft/
   comparisons/
+```
+
+Default training output layout:
+
+```text
+runs/
+  sft/          LLaMA-Factory SFT LoRA adapters.
+  sft_special/ Special-token base checkpoint and SFT LoRA adapters.
+  merged/       Merged HF checkpoints used as OPSD bases.
+  opsd/         OPSD LoRA checkpoints and logs.
 ```

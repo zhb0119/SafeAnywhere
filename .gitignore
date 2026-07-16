@@ -12,7 +12,8 @@ __pycache__/
 tmp/
 build/
 data/
-runs/
+runs/*
+!runs/README.md
 dist/
 *.egg-info/
 

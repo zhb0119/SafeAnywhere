@@ -143,6 +143,7 @@ def generate_one(
     include_reference: bool,
     include_raw_prediction: bool,
     include_rendered_prompt: bool,
+    model_identity: dict[str, Any],
 ) -> dict[str, Any]:
     prompt_text = render_prompt(tokenizer, row, system_prompt=system_prompt, thinking_mode=thinking_mode)
     inputs = tokenizer(prompt_text, return_tensors="pt")
@@ -179,6 +180,7 @@ def generate_one(
             "raw_prediction": raw_prediction,
             "prediction": prediction,
             "generation_config": generation_config,
+            "model_identity": model_identity,
         }
 
     result = {
@@ -193,6 +195,7 @@ def generate_one(
         "expected": row.get("expected", {}),
         "prediction": prediction,
         "generation_config": generation_config,
+        "model_identity": model_identity,
     }
     if include_reference:
         result["reference"] = row.get("reference")
@@ -209,6 +212,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--base-model", default="../models/Qwen3-0.6B")
     parser.add_argument("--adapter", default=None, help="LoRA adapter dir. Omit for base-model evaluation.")
+    parser.add_argument("--model-name", default=None)
+    parser.add_argument("--model-kind", choices=["hf", "lora"], default=None)
     parser.add_argument("--max-new-tokens", type=int, default=384)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -236,6 +241,12 @@ def main() -> int:
         device_map=args.device_map,
         trust_remote_code=args.trust_remote_code,
     )
+    model_identity = {
+        "name": args.model_name or ("adapter" if args.adapter else "base"),
+        "kind": args.model_kind or ("lora" if args.adapter else "hf"),
+        "base_model": args.base_model,
+        "adapter": args.adapter,
+    }
 
     eval_file = resolve_existing_project_path(args.eval_file, ROOT)
     rows = list(read_jsonl(eval_file))
@@ -258,6 +269,7 @@ def main() -> int:
                 include_reference=args.include_reference,
                 include_raw_prediction=args.include_raw_prediction,
                 include_rendered_prompt=args.include_rendered_prompt,
+                model_identity=model_identity,
             )
             f.write(json.dumps(result, ensure_ascii=False, sort_keys=False) + "\n")
             f.flush()

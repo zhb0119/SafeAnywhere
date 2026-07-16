@@ -1,20 +1,32 @@
 eval_name: safeanywhere_v1
 
 paths:
-  eval_dir: build/data_build/eval/safeanywhere_v1_1532
+  eval_dir: build/eval/safeanywhere_715_1502
   eval_input: build/data_build/safeanywhere_sft_v1/sft_val.jsonl
   eval_set_subdir: eval_set
   runs_subdir: runs
   comparisons_subdir: comparisons
 
 models:
-  base_model: ../models/Qwen3-0.6B
-  candidate:
-    name: sft
-    adapter: /root/workspace/SafeAnywhere/runs/qwen3_safeanywhere_lora_sft_v1
-  baseline:
-    name: baseline_sft
-    adapter: ""
+  targets:
+    - name: base
+      kind: hf
+      model: ../models/Qwen3-0.6B
+    - name: sft
+      kind: lora
+      base_model: ../models/Qwen3-0.6B
+      adapter: runs/sft/qwen3_0_6b_v1
+    - name: opsd_step100
+      kind: lora
+      base_model: runs/merged/qwen3_0_6b_sft_v1
+      adapter: runs/opsd/qwen3_0_6b_opsd_v1/checkpoint-step-100
+    - name: opsd_step300
+      kind: lora
+      base_model: runs/merged/qwen3_0_6b_sft_v1
+      adapter: runs/opsd/qwen3_0_6b_opsd_v1/checkpoint-step-300
+
+compare:
+  reference: base
 
 eval_set:
   include_prefix_direct: true
@@ -24,10 +36,10 @@ eval_set:
     max_per_task:
     # Per-task limits override max_per_task when set.
     per_task:
-      benign_utility: 5
-      over_refusal: 5
-      harmful_direct: 10 
-      prefix_recovery: 10
+      benign_utility: 40
+      over_refusal: 40
+      harmful_direct: 40 
+      prefix_recovery: 40
 
 generation:
   max_new_tokens: 384

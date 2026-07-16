@@ -17,6 +17,7 @@ def distillation_kl(
     mixed_kl_weight: float = 0.5,
     temperature: float = 1.0,
     top_k: int | None = None,
+    token_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if student_logits.shape != teacher_logits.shape:
         raise ValueError(f"student/teacher logits shape mismatch: {student_logits.shape} vs {teacher_logits.shape}")
@@ -54,5 +55,12 @@ def distillation_kl(
         per_token = reverse
     else:
         per_token = mixed_kl_weight * forward + (1.0 - mixed_kl_weight) * reverse
+
+    if token_weights is not None:
+        if token_weights.shape != per_token.shape:
+            raise ValueError(f"token_weights shape mismatch: {token_weights.shape} vs {per_token.shape}")
+        weights = token_weights.to(device=per_token.device, dtype=per_token.dtype)
+        denom = weights.sum().clamp_min(1e-8)
+        return (per_token * weights).sum() / denom * (temperature**2)
 
     return per_token.mean() * (temperature**2)

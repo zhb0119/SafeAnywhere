@@ -17,7 +17,7 @@ kernel_config:
 
 train_dataset: configs/sft/llamafactory/dataset_safeanywhere_sft_v1_train.yaml
 
-output_dir: runs/qwen3_safeanywhere_lora_sft_v1
+output_dir: runs/sft/qwen3_0_6b_v1
 micro_batch_size: 1
 global_batch_size: 8
 cutoff_len: 2048
